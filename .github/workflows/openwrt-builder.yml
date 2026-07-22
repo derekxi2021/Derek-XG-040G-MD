@@ -17,8 +17,8 @@ on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: v25.12.1   # 👈 这里改成了正确的 tag 名
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -31,7 +31,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-
+    permissions:  # ←新增这一行
+      actions: write      # 👈 新增这一行，允许删除旧 workflow run 记录（解决这个报错的关键）
+      contents: write        # 👈 新增这一行，允许创建 Release、上传固件
+    
     steps:
     - name: Checkout
       uses: actions/checkout@main
@@ -142,19 +145,22 @@ jobs:
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        files:
+          ${{ env.FIRMWARE }}/*.bin
+          ${{ env.FIRMWARE }}/*.manifest
+          ${{ env.FIRMWARE }}/*.buildinfo
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
       with:
         retain_days: 0
-        keep_minimum_runs: 2
+        keep_minimum_runs: 5
 
     - name: Remove old Releases
       uses: dev-drprasad/delete-older-releases@master
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
-        keep_latest: 3
+        keep_latest: 10
         delete_tags: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
