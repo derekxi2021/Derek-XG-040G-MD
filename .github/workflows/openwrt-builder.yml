@@ -120,8 +120,29 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
+        
+        # 1. 创建统一提取临时目录
+        mkdir -p /tmp/release_files
+
+        # 2. 复制编译好的所有固件与元数据文件
+        cp -f *.bin /tmp/release_files/ 2>/dev/null || true
+        cp -f *.tar.gz /tmp/release_files/ 2>/dev/null || true
+        cp -f *.itb /tmp/release_files/ 2>/dev/null || true
+        cp -f *.manifest /tmp/release_files/ 2>/dev/null || true
+        cp -f *.buildinfo /tmp/release_files/ 2>/dev/null || true
+
+        # 3. 从 staging_dir 跨目录抓取 AN7581 的单独 U-Boot / FIP / BL2 镜像
+        echo "正在提取单独的 U-Boot/FIP 文件..."
+        find /workdir/openwrt/staging_dir/target-*/image/ -type f \( -name "*u-boot*" -o -name "*fip*" -o -name "*bl2*" -o -name "*chainload*" \) -exec cp -f {} /tmp/release_files/ \; 2>/dev/null || true
+
+        # 4. 兜底逻辑：防止空目录
+        if [ -z "$(ls -A /tmp/release_files)" ]; then
+          cp -f * /tmp/release_files/ 2>/dev/null || true
+        fi
+
+        #echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "FIRMWARE=/tmp/release_files" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT        
 
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
@@ -139,19 +160,29 @@ jobs:
         [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
+    #- name: Upload firmware to release
+    #  uses: softprops/action-gh-release@master
+    #  if: steps.tag.outputs.status == 'success' && !cancelled()
+    #  env:
+    #    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #  with:
+    #    tag_name: ${{ steps.tag.outputs.release_tag }}
+    #    body_path: release.txt
+    #    files:
+    #      ${{ env.FIRMWARE }}/*.bin
+    #      ${{ env.FIRMWARE }}/*.manifest
+    #      ${{ env.FIRMWARE }}/*.buildinfo
+   
     - name: Upload firmware to release
-      uses: softprops/action-gh-release@master
+      uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-        files:
-          ${{ env.FIRMWARE }}/*.bin
-          ${{ env.FIRMWARE }}/*.manifest
-          ${{ env.FIRMWARE }}/*.buildinfo
-
+        files: ${{ env.FIRMWARE }}/*
+        
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
       with:
