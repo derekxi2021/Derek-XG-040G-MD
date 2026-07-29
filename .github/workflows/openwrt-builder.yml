@@ -75,6 +75,24 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
+    # --------------------------------------------------------------------------
+    # 开通 UBI/UBIFS 配置，并修补 AN7581 Makefile 输出 UBI 镜像
+    # --------------------------------------------------------------------------
+    - name: Enable UBI and Customize Image Generation
+      run: |
+        cd openwrt
+        # 在 .config 中追加开启 SquashFS 与 UBI 格式支持
+        echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
+        echo "CONFIG_TARGET_ROOTFS_UBIFS=y" >> .config
+        echo "CONFIG_TARGET_ROOTFS_UBI=y" >> .config
+
+        # 自动定位 AN7581 打包 Makefile，并将 IMAGES 设为同时生成 sysupgrade.bin 与 ubi.img
+        MK_FILE=$(find target/linux/airoha/ -name "an7581.mk" -o -name "image.mk" | head -n 1)
+        if [ -f "$MK_FILE" ]; then
+          echo "修改平台配置文件: $MK_FILE"
+          sed -i '/Device\/nokia_xg-040g-md/,/endef/s/IMAGES :=.*/IMAGES := sysupgrade.bin ubi.img/' "$MK_FILE"
+        fi
+        
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files
