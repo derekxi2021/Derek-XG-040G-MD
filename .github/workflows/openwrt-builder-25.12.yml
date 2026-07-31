@@ -1,0 +1,220 @@
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+#
+# File: .github/workflows/openwrt-bulder.yml
+# Description: Build OpenWrt using GitHub Actions
+#
+# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+
+name: OpenWrt Builder
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+env:
+  #REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_URL: https://github.com/openwrt/openwrt
+  #REPO_BRANCH: v25.12.1   # 👈 这里改成了正确的 tag 名
+  #REPO_BRANCH: main
+  REPO_BRANCH: openwrt-25.12
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: .config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    #runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    permissions:  # ←新增这一行
+      actions: write      # 👈 新增这一行，允许删除旧 workflow run 记录（解决这个报错的关键）
+      contents: write        # 👈 新增这一行，允许创建 Release、上传固件
+    
+    steps:
+    - name: Checkout
+      #uses: actions/checkout@main
+      uses: actions/checkout@v6
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: Clone source code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    # --------------------------------------------------------------------------
+    # 开通 UBI/UBIFS 配置，并修补 AN7581 Makefile 输出 UBI 镜像
+    # --------------------------------------------------------------------------
+    - name: Enable UBI and Customize Image Generation
+      run: |
+        cd openwrt
+        # 在 .config 中追加开启 SquashFS 与 UBI 格式支持
+        echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
+        echo "CONFIG_TARGET_ROOTFS_UBIFS=y" >> .config
+        echo "CONFIG_TARGET_ROOTFS_UBI=y" >> .config
+
+        # 自动定位 AN7581 打包 Makefile，并将 IMAGES 设为同时生成 sysupgrade.bin 与 ubi.img
+        MK_FILE=$(find target/linux/airoha/ -name "an7581.mk" -o -name "image.mk" | head -n 1)
+        if [ -f "$MK_FILE" ]; then
+          echo "修改平台配置文件: $MK_FILE"
+          sed -i '/Device\/nokia_xg-040g-md/,/endef/s/IMAGES :=.*/IMAGES := sysupgrade.bin ubi.img/' "$MK_FILE"
+        fi
+        
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        
+        # 1. 创建统一提取临时目录
+        mkdir -p /tmp/release_files
+
+        # 2. 复制编译好的所有固件与元数据文件
+        cp -f *.bin /tmp/release_files/ 2>/dev/null || true
+        cp -f *.tar.gz /tmp/release_files/ 2>/dev/null || true
+        cp -f *.itb /tmp/release_files/ 2>/dev/null || true
+        cp -f *.manifest /tmp/release_files/ 2>/dev/null || true
+        cp -f *.buildinfo /tmp/release_files/ 2>/dev/null || true
+
+        # 3. 从 staging_dir 跨目录抓取 AN7581 的单独 U-Boot / FIP / BL2 镜像
+        echo "正在提取单独的 U-Boot/FIP 文件..."
+        find /workdir/openwrt/staging_dir/target-*/image/ -type f \( -name "*u-boot*" -o -name "*fip*" -o -name "*bl2*" -o -name "*chainload*" \) -exec cp -f {} /tmp/release_files/ \; 2>/dev/null || true
+
+        # 4. 兜底逻辑：防止空目录
+        if [ -z "$(ls -A /tmp/release_files)" ]; then
+          cp -f * /tmp/release_files/ 2>/dev/null || true
+        fi
+
+        #echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "FIRMWARE=/tmp/release_files" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT        
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate release tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    #- name: Upload firmware to release
+    #  uses: softprops/action-gh-release@master
+    #  if: steps.tag.outputs.status == 'success' && !cancelled()
+    #  env:
+    #    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #  with:
+    #    tag_name: ${{ steps.tag.outputs.release_tag }}
+    #    body_path: release.txt
+    #    files:
+    #      ${{ env.FIRMWARE }}/*.bin
+    #      ${{ env.FIRMWARE }}/*.manifest
+    #      ${{ env.FIRMWARE }}/*.buildinfo
+   
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@v2
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+        
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 5
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 10
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
