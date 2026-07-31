@@ -33,8 +33,8 @@ env:
 
 jobs:
   build:
-    #runs-on: ubuntu-22.04
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    #runs-on: ubuntu-latest
     permissions:  # ←新增这一行
       actions: write      # 👈 新增这一行，允许删除旧 workflow run 记录（解决这个报错的关键）
       contents: write        # 👈 新增这一行，允许创建 Release、上传固件
