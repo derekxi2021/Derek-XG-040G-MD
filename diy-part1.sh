@@ -20,7 +20,12 @@ echo 'src-git helloworld https://github.com/kenzok8/small' >>feeds.conf.default
 echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> feeds.conf.default
 echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages' >>feeds.conf.default
 echo 'src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2' >>feeds.conf.default
-# 拉取独立的 vlmcsd 源码到 package 目录（规避 feeds.conf 语法错误）
+# 2. 判断并进入 openwrt 目录（兼容 Actions 环境与本地环境）
+if [ -d "openwrt" ]; then
+    cd openwrt
+fi
+
+# 3. 在 openwrt/package/ 内部创建 custom 目录并 clone 仓库
 mkdir -p package/custom
-git clone https://github.com/sbwml/openwrt-vlmcsd.git package/custom/vlmcsd
-git clone https://github.com/sbwml/luci-app-vlmcsd.git package/custom/luci-app-vlmcsd
+git clone --depth=1 https://github.com/sbwml/openwrt-vlmcsd.git package/custom/vlmcsd
+git clone --depth=1 https://github.com/sbwml/luci-app-vlmcsd.git package/custom/luci-app-vlmcsd
