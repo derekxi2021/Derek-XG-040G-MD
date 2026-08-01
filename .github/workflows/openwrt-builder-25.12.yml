@@ -69,12 +69,12 @@ jobs:
       run: cd openwrt && ./scripts/feeds install -a
 
     # --------------------------------------------------------------------------
-    # 25.12 核心修补：安全无损修改 Patch + UBI 打包 + 双设备名兼容
+    # 25.12 核心修复：还原补丁引入（禁止修改 include）、配置 UBI 与设备名
     # --------------------------------------------------------------------------
     - name: Enable UBI and Safe Patch Modification
       run: |
         cd openwrt
-        # 1. 在 .config 中追加开启 SquashFS 与 UBI 格式支持
+        # 1. 追加开启 SquashFS 与 UBI 格式支持
         echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
         echo "CONFIG_TARGET_ROOTFS_UBIFS=y" >> .config
         echo "CONFIG_TARGET_ROOTFS_UBI=y" >> .config
@@ -87,15 +87,11 @@ jobs:
           sed -i '/define Device\/nokia_xg-040g-md/a \  SUPPORTED_DEVICES := nokia,xg-040g-md nokia,xg-040g-md-ubi' "$MK_FILE"
         fi
 
-        # 3. 彻底重置 patches 目录，确保基准代码干净
+        # 3. 彻底重置 target/linux/airoha 目录，100% 恢复官方原版补丁（带回被抹掉的 pcs.h 头文件）
         git checkout -- target/linux/airoha/ 2>/dev/null || true
 
-        # 4. 规范换行符（转换 CRLF 到 LF）
+        # 4. 仅规范化换行符（CRLF -> LF），绝不去动任何 #include 代码行！
         find target/linux/airoha/ -name "*.patch" -exec dos2unix {} + 2>/dev/null || true
-
-        # 5. 【关键修复】把引发冲突的 include 注释掉，而不是删掉！保持补丁行数不变！
-        find target/linux/airoha/ -name "*.patch" -exec sed -i 's/+#include <linux\/pcs\/pcs.h>/+\/* #include <linux\/pcs\/pcs.h> *\//g' {} +
-        find target/linux/airoha/ -name "*.patch" -exec sed -i 's/+#include <linux\/pcs\/pcs-lynx.h>/+\/* #include <linux\/pcs\/pcs-lynx.h> *\//g' {} +
 
     - name: Load custom configuration
       run: |
