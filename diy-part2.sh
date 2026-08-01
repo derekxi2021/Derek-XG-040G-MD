@@ -25,4 +25,12 @@ git clone https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-a
 
 # 在 openwrt 根目录下拉取 vlmcsd 包
 rm -rf package/vlmcsd package/luci-app-vlmcsd
-git clone https://github.com/sbwml/openwrt-vlmcsd.git package/vlmcsd
+# 从 ImmortalWrt 官方 packages 库中精准拉取 net/vlmcsd
+git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages.git package/vlmcsd-tmp
+cd package/vlmcsd-tmp
+git sparse-checkout set net/vlmcsd
+cd ../..
+mv package/vlmcsd-tmp/net/vlmcsd package/vlmcsd
+rm -rf package/vlmcsd-tmp
+# 拉取配套的 LuCI 界面
+git clone https://github.com/openwrt-develop/luci-app-vlmcsd.git package/luci-app-vlmcsd
