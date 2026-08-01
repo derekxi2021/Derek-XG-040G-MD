@@ -2,12 +2,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 #
 # File: .github/workflows/openwrt-bulder.yml
-# Description: Build OpenWrt using GitHub Actions
-#
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
+# Description: Build OpenWrt 25.12 for Nokia XG-040G-MD
 #
 
 name: OpenWrt Builder 25.12
@@ -17,10 +12,7 @@ on:
   workflow_dispatch:
 
 env:
-  #REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_URL: https://github.com/openwrt/openwrt
-  #REPO_BRANCH: v25.12.1   # 👈 这里改成了正确的 tag 名
-  #REPO_BRANCH: main
   REPO_BRANCH: openwrt-25.12
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
@@ -34,15 +26,13 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    #runs-on: ubuntu-latest
-    permissions:  # ←新增这一行
-      actions: write      # 👈 新增这一行，允许删除旧 workflow run 记录（解决这个报错的关键）
-      contents: write        # 👈 新增这一行，允许创建 Release、上传固件
-    
+    permissions:
+      actions: write
+      contents: write
+
     steps:
     - name: Checkout
-      #uses: actions/checkout@main
-      uses: actions/checkout@v6
+      uses: actions/checkout@v4
 
     - name: Initialization environment
       env:
@@ -51,7 +41,7 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler dos2unix fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -71,7 +61,7 @@ jobs:
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
-        
+
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
@@ -79,23 +69,34 @@ jobs:
       run: cd openwrt && ./scripts/feeds install -a
 
     # --------------------------------------------------------------------------
-    # 开通 UBI/UBIFS 配置，并修补 AN7581 Makefile 输出 UBI 镜像
+    # 25.12 核心修补：安全无损修改 Patch + UBI 打包 + 双设备名兼容
     # --------------------------------------------------------------------------
-    - name: Enable UBI and Customize Image Generation
+    - name: Enable UBI and Safe Patch Modification
       run: |
         cd openwrt
-        # 在 .config 中追加开启 SquashFS 与 UBI 格式支持
+        # 1. 在 .config 中追加开启 SquashFS 与 UBI 格式支持
         echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
         echo "CONFIG_TARGET_ROOTFS_UBIFS=y" >> .config
         echo "CONFIG_TARGET_ROOTFS_UBI=y" >> .config
 
-        # 自动定位 AN7581 打包 Makefile，并将 IMAGES 设为同时生成 sysupgrade.bin 与 ubi.img
+        # 2. 定位 AN7581 Makefile，配置打包 ubi.img 并注入 SUPPORTED_DEVICES 兼容列表
         MK_FILE=$(find target/linux/airoha/ -name "an7581.mk" -o -name "image.mk" | head -n 1)
         if [ -f "$MK_FILE" ]; then
           echo "修改平台配置文件: $MK_FILE"
           sed -i '/Device\/nokia_xg-040g-md/,/endef/s/IMAGES :=.*/IMAGES := sysupgrade.bin ubi.img/' "$MK_FILE"
+          sed -i '/define Device\/nokia_xg-040g-md/a \  SUPPORTED_DEVICES := nokia,xg-040g-md nokia,xg-040g-md-ubi' "$MK_FILE"
         fi
-        
+
+        # 3. 彻底重置 patches 目录，确保基准代码干净
+        git checkout -- target/linux/airoha/ 2>/dev/null || true
+
+        # 4. 规范换行符（转换 CRLF 到 LF）
+        find target/linux/airoha/ -name "*.patch" -exec dos2unix {} + 2>/dev/null || true
+
+        # 5. 【关键修复】把引发冲突的 include 注释掉，而不是删掉！保持补丁行数不变！
+        find target/linux/airoha/ -name "*.patch" -exec sed -i 's/+#include <linux\/pcs\/pcs.h>/+\/* #include <linux\/pcs\/pcs.h> *\//g' {} +
+        find target/linux/airoha/ -name "*.patch" -exec sed -i 's/+#include <linux\/pcs\/pcs-lynx.h>/+\/* #include <linux\/pcs\/pcs-lynx.h> *\//g' {} +
+
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files
@@ -104,16 +105,19 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: Patch AN7581 Driver Patches for Kernel 6.12
+    - name: Create fit_check_image link rule
       run: |
-        sudo apt-get update && sudo apt-get install -y dos2unix
         cd openwrt
-        # 1. 修复所有补丁文件的 CRLF 换行符格式（解决 malformed patch 报错的关键）
-        find target/linux/airoha/ -name "*.patch" -exec dos2unix {} +
-        
-        # 2. 保留你原有的头文件清理
-        find target/linux/airoha/ -name "*.patch" -exec sed -i '/+#include <linux\/pcs\/pcs.h>/d' {} +
-        find target/linux/airoha/ -name "*.patch" -exec sed -i '/+#include <linux\/pcs\/pcs-lynx.h>/d' {} +
+        mkdir -p files/usr/bin
+        mkdir -p files/etc/uci-defaults
+        cat << 'EOF' > files/etc/uci-defaults/99-fix-fit-check
+        #!/bin/sh
+        if [ ! -e /usr/bin/fit_check_image ] && [ -x /usr/bin/fit-check-image ]; then
+            ln -s /usr/bin/fit-check-image /usr/bin/fit_check_image
+        fi
+        exit 0
+        EOF
+        chmod +x files/etc/uci-defaults/99-fix-fit-check
 
     - name: Download package
       id: package
@@ -140,7 +144,7 @@ jobs:
       run: df -hT
 
     - name: Upload bin directory
-      uses: actions/upload-artifact@main
+      uses: actions/upload-artifact@v4
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -156,28 +160,28 @@ jobs:
         # 1. 创建统一提取临时目录
         mkdir -p /tmp/release_files
 
-        # 2. 复制编译好的所有固件与元数据文件
+        # 2. 复制编译好的所有固件（包含 ubi.img）
         cp -f *.bin /tmp/release_files/ 2>/dev/null || true
+        cp -f *.img /tmp/release_files/ 2>/dev/null || true
         cp -f *.tar.gz /tmp/release_files/ 2>/dev/null || true
         cp -f *.itb /tmp/release_files/ 2>/dev/null || true
         cp -f *.manifest /tmp/release_files/ 2>/dev/null || true
         cp -f *.buildinfo /tmp/release_files/ 2>/dev/null || true
 
-        # 3. 从 staging_dir 跨目录抓取 AN7581 的单独 U-Boot / FIP / BL2 镜像
+        # 3. 抓取 AN7581 的 U-Boot / FIP / BL2 / Chainload 引导镜像
         echo "正在提取单独的 U-Boot/FIP 文件..."
         find /workdir/openwrt/staging_dir/target-*/image/ -type f \( -name "*u-boot*" -o -name "*fip*" -o -name "*bl2*" -o -name "*chainload*" \) -exec cp -f {} /tmp/release_files/ \; 2>/dev/null || true
 
-        # 4. 兜底逻辑：防止空目录
+        # 4. 兜底逻辑
         if [ -z "$(ls -A /tmp/release_files)" ]; then
           cp -f * /tmp/release_files/ 2>/dev/null || true
         fi
 
-        #echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "FIRMWARE=/tmp/release_files" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT        
 
     - name: Upload firmware directory
-      uses: actions/upload-artifact@main
+      uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -189,22 +193,8 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
-    #- name: Upload firmware to release
-    #  uses: softprops/action-gh-release@master
-    #  if: steps.tag.outputs.status == 'success' && !cancelled()
-    #  env:
-    #    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #  with:
-    #    tag_name: ${{ steps.tag.outputs.release_tag }}
-    #    body_path: release.txt
-    #    files:
-    #      ${{ env.FIRMWARE }}/*.bin
-    #      ${{ env.FIRMWARE }}/*.manifest
-    #      ${{ env.FIRMWARE }}/*.buildinfo
-   
     - name: Upload firmware to release
       uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
