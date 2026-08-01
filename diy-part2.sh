@@ -19,18 +19,27 @@
 # Modify hostname
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
 
-# 在 openwrt 根目录下拉取 airoha-npu 包
-rm -rf package/luci-app-airoha-npu
-git clone https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
+# 处理 luci-app-airoha-npu (从 ImmortalWrt 官方分支/主库抽取)
+rm -rf package/luci-app-airoha-npu package/airoha-tmp
+# 从维护 AN7581 / Airoha 最全的 ImmortalWrt 官方 LuCI 仓库中提取
+git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/luci.git package/airoha-tmp
+cd package/airoha-tmp
+git sparse-checkout set applications/luci-app-airoha-npu
+cd ../..
+if [ -d "package/airoha-tmp/applications/luci-app-airoha-npu" ]; then
+    mv package/airoha-tmp/applications/luci-app-airoha-npu package/luci-app-airoha-npu
+fi
+rm -rf package/airoha-tmp
 
 # 在 openwrt 根目录下拉取 vlmcsd 包
-rm -rf package/vlmcsd package/luci-app-vlmcsd
-# 从 ImmortalWrt 官方 packages 库中精准拉取 net/vlmcsd
-git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages.git package/vlmcsd-tmp
+# 1. 彻底清理旧目录
+rm -rf package/vlmcsd package/luci-app-vlmcsd package/vlmcsd-tmp
+# 2. 从 coolsnowwolf/lede 提取 vlmcsd 与 luci-app-vlmcsd
+git clone --depth=1 --filter=blob:none --sparse https://github.com/coolsnowwolf/lede.git package/vlmcsd-tmp
 cd package/vlmcsd-tmp
-git sparse-checkout set net/vlmcsd
+git sparse-checkout set package/lean/vlmcsd package/lean/luci-app-vlmcsd
 cd ../..
-mv package/vlmcsd-tmp/net/vlmcsd package/vlmcsd
+# 3. 移动到 package 目录下并清理临时文件夹
+mv package/vlmcsd-tmp/package/lean/vlmcsd package/vlmcsd
+mv package/vlmcsd-tmp/package/lean/luci-app-vlmcsd package/luci-app-vlmcsd
 rm -rf package/vlmcsd-tmp
-# 拉取配套的 LuCI 界面
-git clone https://github.com/openwrt-develop/luci-app-vlmcsd.git package/luci-app-vlmcsd
