@@ -127,6 +127,16 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
+    - name: Debug Check Custom Changes
+      run: |
+        cd openwrt
+        echo "=== 检查 .config 是否包含自定义包 ==="
+        grep -E "vlmcsd|lm-sensors|wakeonlan|airoha" .config || true
+        
+        echo "=== 检查 Makefile 或 Patch 是否保留了你的修改 ==="
+        git status
+        git diff target/linux/airoha/
+        
     - name: Compile the firmware
       id: compile
       run: |
