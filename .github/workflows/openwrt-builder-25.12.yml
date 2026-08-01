@@ -106,7 +106,12 @@ jobs:
 
     - name: Patch AN7581 Driver Patches for Kernel 6.12
       run: |
+        sudo apt-get update && sudo apt-get install -y dos2unix
         cd openwrt
+        # 1. 修复所有补丁文件的 CRLF 换行符格式（解决 malformed patch 报错的关键）
+        find target/linux/airoha/ -name "*.patch" -exec dos2unix {} +
+        
+        # 2. 保留你原有的头文件清理
         find target/linux/airoha/ -name "*.patch" -exec sed -i '/+#include <linux\/pcs\/pcs.h>/d' {} +
         find target/linux/airoha/ -name "*.patch" -exec sed -i '/+#include <linux\/pcs\/pcs-lynx.h>/d' {} +
 
