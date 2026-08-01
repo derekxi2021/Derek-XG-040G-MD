@@ -101,7 +101,22 @@ jobs:
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
-
+        
+    - name: Create fit_check_image link rule
+      run: |
+        cd openwrt
+        mkdir -p files/usr/bin
+        # 如果编译出的命令是 fit-check-image，系统脚本找的是 fit_check_image，做个软链接
+        mkdir -p files/etc/uci-defaults
+        cat << 'EOF' > files/etc/uci-defaults/99-fix-fit-check
+        #!/bin/sh
+        if [ ! -e /usr/bin/fit_check_image ] && [ -x /usr/bin/fit-check-image ]; then
+            ln -s /usr/bin/fit-check-image /usr/bin/fit_check_image
+        fi
+        exit 0
+        EOF
+        chmod +x files/etc/uci-defaults/99-fix-fit-check
+        
     - name: Download package
       id: package
       run: |
