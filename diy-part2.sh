@@ -23,4 +23,5 @@
 git clone https://github.com/nethunter88/luci-app-airoha-npu.git package/luci-app-airoha-npu
 
 # 在 openwrt 根目录下拉取 vlmcsd 包
+rm -rf package/vlmcsd package/luci-app-vlmcsd
 git clone https://github.com/sbwml/openwrt-vlmcsd.git package/vlmcsd
