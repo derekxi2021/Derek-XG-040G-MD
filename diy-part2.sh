@@ -18,3 +18,10 @@
 
 # Modify hostname
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
+
+# 在 openwrt 根目录下拉取 airoha-npu 包
+git clone https://github.com/nethunter88/luci-app-airoha-npu.git package/luci-app-airoha-npu
+
+# 在 openwrt 根目录下拉取 vlmcsd 包
+git clone https://github.com/openwrt-develop/luci-app-vlmcsd.gits package/luci-app-vlmcsd
+git clone https://github.com/cokebar/openwrt-vlmcsd.git package/vlmcsd
