@@ -20,7 +20,8 @@
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
 
 # 在 openwrt 根目录下拉取 airoha-npu 包
-git clone https://github.com/nethunter88/luci-app-airoha-npu.git package/luci-app-airoha-npu
+rm -rf package/luci-app-airoha-npu
+git clone https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
 
 # 在 openwrt 根目录下拉取 vlmcsd 包
 rm -rf package/vlmcsd package/luci-app-vlmcsd
