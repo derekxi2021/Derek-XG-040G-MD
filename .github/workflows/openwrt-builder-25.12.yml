@@ -71,17 +71,6 @@ jobs:
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
-
-    - name: Patch AN7581 Ethernet Driver Header for Kernel 6.12
-      run: |
-        cd openwrt
-        # 自动定位 airoha_eth.c 并将已被移除的 linux/pcs/pcs.h 替换或移除
-        TARGET_FILE=$(find target/linux/airoha/ -name "airoha_eth.c" 2>/dev/null | head -n 1)
-        if [ -f "$TARGET_FILE" ]; then
-          echo "正在修补驱动头文件: $TARGET_FILE"
-          # 在 Linux 6.12 中，去除对 linux/pcs/pcs.h 的依赖
-          sed -i '/#include <linux\/pcs\/pcs.h>/d' "$TARGET_FILE"
-        fi
         
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -114,6 +103,12 @@ jobs:
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: Patch AN7581 Driver Patches for Kernel 6.12
+      run: |
+        cd openwrt
+        find target/linux/airoha/ -name "*.patch" -exec sed -i '/+#include <linux\/pcs\/pcs.h>/d' {} +
+        find target/linux/airoha/ -name "*.patch" -exec sed -i '/+#include <linux\/pcs\/pcs-lynx.h>/d' {} +
 
     - name: Download package
       id: package
