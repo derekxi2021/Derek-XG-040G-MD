@@ -31,15 +31,21 @@ if [ -d "package/airoha-tmp/applications/luci-app-airoha-npu" ]; then
 fi
 rm -rf package/airoha-tmp
 
-# 在 openwrt 根目录下拉取 vlmcsd 包
+# 拉取 vlmcsd 包
 # 1. 彻底清理旧目录
 rm -rf package/vlmcsd package/luci-app-vlmcsd package/vlmcsd-tmp
-# 2. 从 coolsnowwolf/lede 提取 vlmcsd 与 luci-app-vlmcsd
-git clone --depth=1 --filter=blob:none --sparse https://github.com/coolsnowwolf/lede.git package/vlmcsd-tmp
+
+# 2. 从 ImmortalWrt 官方 packages 和 luci 仓库拉取 vlmcsd 及界面包
+git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages.git package/vlmcsd-tmp
 cd package/vlmcsd-tmp
-git sparse-checkout set package/lean/vlmcsd package/lean/luci-app-vlmcsd
+git sparse-checkout set net/vlmcsd
 cd ../..
-# 3. 移动到 package 目录下并清理临时文件夹
-mv package/vlmcsd-tmp/package/lean/vlmcsd package/vlmcsd
-mv package/vlmcsd-tmp/package/lean/luci-app-vlmcsd package/luci-app-vlmcsd
+mv package/vlmcsd-tmp/net/vlmcsd package/vlmcsd
+rm -rf package/vlmcsd-tmp
+
+git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/luci.git package/vlmcsd-tmp
+cd package/vlmcsd-tmp
+git sparse-checkout set applications/luci-app-vlmcsd
+cd ../..
+mv package/vlmcsd-tmp/applications/luci-app-vlmcsd package/luci-app-vlmcsd
 rm -rf package/vlmcsd-tmp
