@@ -145,6 +145,12 @@ jobs:
         echo "=== 检查 Makefile 或 Patch 是否保留了你的修改 ==="
         git status
         git diff target/linux/airoha/
+
+    - name: Patch U-Boot Bootm Length Limit
+      run: |
+        cd openwrt
+        # 使用方法一或方法二的脚本
+        find package/boot/ -name "Makefile" -exec sed -i 's/TARGET_CFLAGS +=/TARGET_CFLAGS += -DCONFIG_SYS_BOOTM_LEN=0x8000000/g' {} +
         
     - name: Compile the firmware
       id: compile
