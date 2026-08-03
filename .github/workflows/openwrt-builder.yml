@@ -81,50 +81,6 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    # --------------------------------------------------------------------------
-    # 2. 注入 UBI 强开启配置，并修改平台 Makefile
-    # --------------------------------------------------------------------------
-    - name: Enable UBI and Customize Image Generation
-      run: |
-        cd openwrt
-        # 在加载完基础 .config 后追加 UBI 强开启参数
-        cat <<EOF >> .config
-        CONFIG_TARGET_ROOTFS_SQUASHFS=y
-        CONFIG_TARGET_ROOTFS_UBIFS=y
-        CONFIG_TARGET_ROOTFS_UBI=y
-        EOF
-
-        # 定位 AN7581 打包 Makefile
-        MK_FILE=$(find target/linux/airoha/ -name "an7581.mk" -o -name "image.mk" | head -n 1)
-        if [ -f "$MK_FILE" ]; then
-          echo "修改平台配置文件: $MK_FILE"
-          
-          # 兼容匹配 IMAGES := 或 IMAGES +=，同时输出 sysupgrade.bin 和 ubi.img
-          sed -i '/Device\/nokia_xg-040g-md/,/endef/s/IMAGES [:+]=.*/IMAGES := sysupgrade.bin ubi.img/' "$MK_FILE"
-          
-          # 动态插入 SUPPORTED_DEVICES，确保 Web 升级校验时不报错
-          if ! grep -q "nokia,xg-040g-md-ubi" "$MK_FILE"; then
-            sed -i '/define Device\/nokia_xg-040g-md/a \  SUPPORTED_DEVICES := nokia,xg-040g-md nokia,xg-040g-md-ubi' "$MK_FILE"
-          fi
-        fi
-
-        # 修复 patches 换行符，防止 malformed patch 报错
-        find target/linux/airoha/ -name "*.patch" -exec dos2unix {} + 2>/dev/null || true
-        
-    - name: Create fit_check_image link rule
-      run: |
-        cd openwrt
-        mkdir -p files/usr/bin
-        mkdir -p files/etc/uci-defaults
-        cat << 'EOF' > files/etc/uci-defaults/99-fix-fit-check
-        #!/bin/sh
-        if [ ! -e /usr/bin/fit_check_image ] && [ -x /usr/bin/fit-check-image ]; then
-            ln -s /usr/bin/fit-check-image /usr/bin/fit_check_image
-        fi
-        exit 0
-        EOF
-        chmod +x files/etc/uci-defaults/99-fix-fit-check
-
     - name: Download package
       id: package
       run: |
@@ -145,12 +101,6 @@ jobs:
         echo "=== 检查 Makefile 或 Patch 是否保留了你的修改 ==="
         git status
         git diff target/linux/airoha/
-
-    - name: Patch U-Boot Bootm Length Limit
-      run: |
-        cd openwrt
-        # 使用方法一或方法二的脚本
-        find package/boot/ -name "Makefile" -exec sed -i 's/TARGET_CFLAGS +=/TARGET_CFLAGS += -DCONFIG_SYS_BOOTM_LEN=0x8000000/g' {} +
         
     - name: Compile the firmware
       id: compile
