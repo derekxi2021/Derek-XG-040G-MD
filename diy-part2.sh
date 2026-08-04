@@ -69,7 +69,14 @@ mv package/statistics-luci-tmp/applications/luci-app-statistics package/luci-app
 rm -rf package/statistics-luci-tmp
 
 # -------------------------------
-# 6. LuCI NPU 依赖：collectd
+# 6. 补安全：解除 AN7581 对 LuCI 的裁剪
+# -------------------------------
+sed -i 's/DEPENDS:=+luci-base/DEPENDS:=+luci-base +libpthread/' package/luci-app-airoha-npu/Makefile
+sed -i 's/DEPENDS:=+luci-base/DEPENDS:=+luci-base +libpthread/' package/luci-app-vlmcsd/Makefile
+sed -i 's/DEPENDS:=+luci-base/DEPENDS:=+luci-base +libpthread/' package/luci-app-statistics/Makefile
+
+# -------------------------------
+# 7. 强制写入 .config（确保一定编译）
 # -------------------------------
 cat <<EOF >> .config
 CONFIG_PACKAGE_collectd=y
@@ -77,19 +84,7 @@ CONFIG_PACKAGE_collectd-mod-exec=y
 CONFIG_PACKAGE_collectd-mod-sensors=y
 CONFIG_PACKAGE_collectd-mod-cpu=y
 CONFIG_PACKAGE_collectd-mod-interface=y
-EOF
 
-# -------------------------------
-# 7. 补安全：解除 AN7581 对 LuCI 的裁剪
-# -------------------------------
-sed -i 's/DEPENDS:=+luci-base/DEPENDS:=+luci-base +libpthread/' package/luci-app-airoha-npu/Makefile
-sed -i 's/DEPENDS:=+luci-base/DEPENDS:=+luci-base +libpthread/' package/luci-app-vlmcsd/Makefile
-sed -i 's/DEPENDS:=+luci-base/DEPENDS:=+luci-base +libpthread/' package/luci-app-statistics/Makefile
-
-# -------------------------------
-# 8. 强制写入 .config（确保一定编译）
-# -------------------------------
-cat <<EOF >> .config
 CONFIG_PACKAGE_airoha-en7581-npu-firmware=y
 CONFIG_PACKAGE_luci-app-airoha-npu=y
 CONFIG_PACKAGE_luci-i18n-airoha-npu-zh-cn=y
@@ -103,8 +98,6 @@ CONFIG_PACKAGE_luci-app-statistics=y
 EOF
 
 # -------------------------------
-# 9. 重新 defconfig
+# 8. 重新 defconfig（必须最后执行）
 # -------------------------------
 make defconfig
-
-echo "✔ 主线 NPU + LuCI NPU + collectd + 补安全 已全部启用"
