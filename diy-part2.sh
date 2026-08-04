@@ -21,13 +21,27 @@
 
 #!/bin/bash
 
-#!/bin/bash
-#
-# diy-part2.sh - Derek AN7581 整合版
+#  diy-part2.sh - Derek AN7581 整合版
 # - 禁用 AN7581 safe-mode / LuCI 安全裁剪
 # - 主线 NPU + LuCI NPU + collectd
 # - vlmcsd + lm-sensors LuCI 全部启用
 #
+
+echo "=== 检查源码残留包 ==="
+
+# 列出所有非 feeds 的 package 目录
+find package/ -maxdepth 1 -type d | sed 's|package/||' | grep -v '^$'
+
+# 检查是否存在残留的 airoha-npu-firmware
+if [ -d package/airoha-npu-firmware ]; then
+    echo "⚠️ 发现残留包：package/airoha-npu-firmware"
+    echo "➡️ 自动删除以避免构建失败"
+    rm -rf package/airoha-npu-firmware
+else
+    echo "✔ 未发现残留的 airoha-npu-firmware"
+fi
+
+echo "=== 残留包检查完成 ==="
 
 # ============================================================
 # 0. 禁用 AN7581 的 LuCI 安全裁剪（safe-mode）
