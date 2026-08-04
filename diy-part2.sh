@@ -19,17 +19,31 @@
 # Modify hostname
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
 
+#!/bin/bash
+
 # ============================================================
-#  AN7581 / EN7581 NPU 正确拉取方式（最终版）
+#  Derek 最终整合版 diy-part2.sh（AN7581 专用）
+#  - 手动创建 NPU 固件包（更好、更可控）
+#  - LuCI NPU 监控界面
+#  - vlmcsd + lm-sensors + LuCI 补安全
+#  - 完全兼容 ImmortalWrt / OpenWrt
 # ============================================================
 
-# -------------------------------
-# 1. 拉取官方 NPU 固件（来自 openwrt.git）
-# -------------------------------
-rm -rf package/airoha-npu-firmware
+
+# ============================================================
+# 1. 删除 feeds 中的冲突包（避免覆盖）
+# ============================================================
+rm -rf package/vlmcsd package/luci-app-vlmcsd package/vlmcsd-tmp
+rm -rf package/luci-app-statistics package/luci-app-statistics-tmp
+rm -rf package/airoha-npu-firmware package/luci-app-airoha-npu
+
+
+# ============================================================
+# 2. 创建 NPU 固件包（来自 openwrt/target/linux/airoha）
+# ============================================================
 mkdir -p package/airoha-npu-firmware/files/lib/firmware/airoha
 
-# 复制官方固件（你必须把 openwrt 主仓库 clone 下来）
+# 复制官方固件（你必须已 clone openwrt 主仓库）
 cp -r target/linux/airoha/files/lib/firmware/airoha/* \
       package/airoha-npu-firmware/files/lib/firmware/airoha/
 
@@ -56,32 +70,16 @@ endef
 \$(eval \$(call BuildPackage,airoha-npu-firmware))
 EOF
 
-# -------------------------------
-# 2. 拉取 LuCI NPU 监控界面（第三方）
-# -------------------------------
-rm -rf package/luci-app-airoha-npu
+
+# ============================================================
+# 3. 拉取 LuCI NPU 监控界面（第三方）
+# ============================================================
 git clone https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
 
-# -------------------------------
-# 3. 强制写入 .config
-# -------------------------------
-cat <<EOF >> .config
-CONFIG_PACKAGE_airoha-npu-firmware=y
-CONFIG_PACKAGE_luci-app-airoha-npu=y
-EOF
 
-# -------------------------------
-#  拉取 vlmcsd（不会被 feeds 覆盖）
-# -------------------------------
-
-# -------------------------------
-# 1. 删除 feeds 中的 vlmcsd，避免覆盖
-# -------------------------------
-rm -rf package/vlmcsd package/luci-app-vlmcsd package/vlmcsd-tmp
-
-# -------------------------------
-# 2. 拉取 vlmcsd（来自 ImmortalWrt）
-# -------------------------------
+# ============================================================
+# 4. 拉取 vlmcsd（来自 ImmortalWrt packages）
+# ============================================================
 git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages.git package/vlmcsd-tmp
 cd package/vlmcsd-tmp
 git sparse-checkout set net/vlmcsd
@@ -89,9 +87,10 @@ cd ../..
 mv package/vlmcsd-tmp/net/vlmcsd package/vlmcsd
 rm -rf package/vlmcsd-tmp
 
-# -------------------------------
-# 3. 拉取 luci-app-vlmcsd（来自 ImmortalWrt）
-# -------------------------------
+
+# ============================================================
+# 5. 拉取 luci-app-vlmcsd（来自 ImmortalWrt luci）
+# ============================================================
 git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/luci.git package/vlmcsd-tmp
 cd package/vlmcsd-tmp
 git sparse-checkout set applications/luci-app-vlmcsd
@@ -99,24 +98,39 @@ cd ../..
 mv package/vlmcsd-tmp/applications/luci-app-vlmcsd package/luci-app-vlmcsd
 rm -rf package/vlmcsd-tmp
 
-# -------------------------------
-# 4. 强制写入 .config（关键步骤）
-# -------------------------------
+
+# ============================================================
+# 6. 补安全：解除 AN7581 对 vlmcsd LuCI 的裁剪
+# ============================================================
+sed -i 's/DEPENDS:=+luci-base/DEPENDS:=+luci-base +libpthread/' package/luci-app-vlmcsd/Makefile
+
+
+# ============================================================
+# 7. 补安全：解除 AN7581 对 lm-sensors LuCI 的裁剪
+# ============================================================
+sed -i 's/DEPENDS:=+luci-base/DEPENDS:=+luci-base +libpthread/' feeds/luci/applications/luci-app-statistics/Makefile
+
+
+# ============================================================
+# 8. 强制写入 .config（确保一定编译）
+# ============================================================
 cat <<EOF >> .config
+CONFIG_PACKAGE_airoha-npu-firmware=y
+CONFIG_PACKAGE_luci-app-airoha-npu=y
+
 CONFIG_PACKAGE_vlmcsd=y
 CONFIG_PACKAGE_luci-app-vlmcsd=y
 CONFIG_PACKAGE_luci-i18n-vlmcsd-zh-cn=y
+
+CONFIG_PACKAGE_lm-sensors=y
+CONFIG_PACKAGE_luci-app-statistics=y
+CONFIG_PACKAGE_collectd-mod-sensors=y
 EOF
 
-# -------------------------------
-# 5. AN7581 平台补安全（必须）
-#    否则 vlmcsd 会被安全裁剪机制过滤掉
-# -------------------------------
-sed -i '/Package\/vlmcsd/,+5 s/DEPENDS:=.*/DEPENDS:=+libpthread/' package/vlmcsd/Makefile
 
-# -------------------------------
-# 6. 再次执行 defconfig（必须）
-# -------------------------------
+# ============================================================
+# 9. 重新 defconfig（必须）
+# ============================================================
 make defconfig
 
-echo "✔ vlmcsd 已强制启用并补安全，AN7581 平台不会再过滤掉。"
+echo "✔ 最终整合版已完成：NPU + vlmcsd + lm-sensors + LuCI 补安全全部启用"
