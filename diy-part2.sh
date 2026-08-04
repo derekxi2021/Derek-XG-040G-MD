@@ -20,7 +20,7 @@
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
 
 # -------------------------------
-# 1. 拉取 luci-app-airoha-npu
+# 拉取 luci-app-airoha-npu
 # -------------------------------
 rm -rf package/luci-app-airoha-npu package/airoha-tmp
 git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/luci.git package/airoha-tmp
@@ -31,7 +31,27 @@ mv package/airoha-tmp/applications/luci-app-airoha-npu package/luci-app-airoha-n
 rm -rf package/airoha-tmp
 
 # -------------------------------
-# 2. 拉取 vlmcsd（不会被 feeds 覆盖）
+# 拉取 airoha-npu-firmware（关键）
+# -------------------------------
+rm -rf package/airoha-npu-firmware package/airoha-npu-fw-tmp
+git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages.git package/airoha-npu-fw-tmp
+cd package/airoha-npu-fw-tmp
+git sparse-checkout set firmware/airoha-npu-firmware
+cd ../..
+mv package/airoha-npu-fw-tmp/firmware/airoha-npu-firmware package/airoha-npu-firmware
+rm -rf package/airoha-npu-fw-tmp
+
+# -------------------------------
+#  强制写入 .config（确保一定编译）
+# -------------------------------
+cat <<EOF >> .config
+CONFIG_PACKAGE_airoha-npu-firmware=y
+CONFIG_PACKAGE_luci-app-airoha-npu=y
+EOF
+
+
+# -------------------------------
+#  拉取 vlmcsd（不会被 feeds 覆盖）
 # -------------------------------
 rm -rf package/vlmcsd package/luci-app-vlmcsd package/vlmcsd-tmp
 
@@ -50,7 +70,7 @@ mv package/vlmcsd-tmp/applications/luci-app-vlmcsd package/luci-app-vlmcsd
 rm -rf package/vlmcsd-tmp
 
 # -------------------------------
-# 3. 强制写入 .config（关键步骤）
+#  强制写入 .config（关键步骤）
 # -------------------------------
 cat <<EOF >> .config
 CONFIG_PACKAGE_vlmcsd=y
