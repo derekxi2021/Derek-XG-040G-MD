@@ -19,31 +19,58 @@
 # Modify hostname
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
 
-#!/bin/bash
-
 # ============================================================
-# Derek 最终版（适用于 xiangtailiang 源码）
-# 该源码已内置 NPU / LuCI / collectd / sensors / vlmcsd 补丁
-# 所以不需要再 clone、补安全、禁用 safe-mode
+# 针对 xiangtailiang/openwrt + AN7581 (Nokia/Bell XG-040G-MD)
+# 强制编译进：NPU固件 + luci-app-airoha-npu + luci-app-vlmcsd
 # ============================================================
 
-# 1. 删除旧残留包（可选）
+echo ">>> 开始执行 diy-part2.sh"
+
+# 1. 清理可能冲突的旧目录
+rm -rf package/luci-app-airoha-npu 2>/dev/null || true
 rm -rf package/airoha-npu-firmware 2>/dev/null || true
 
-# 2. 不再 clone luci-app-airoha-npu（源码已自带）
-# 3. 不再 clone vlmcsd（源码已自带）
-# 4. 不再 clone statistics（源码已自带）
-# 5. 不再补安全（源码已自带）
-# 6. 不再禁用 safe-mode（源码已自带修复）
+# 2. 手动克隆 luci-app-airoha-npu（第三方包，必须放进 package/）
+echo ">>> 克隆 luci-app-airoha-npu ..."
+git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
 
-# 7. 强制写入你需要的额外包（可选）
+# 3. 确保 kenzo 源里的 vlmcsd 相关包被安装
+echo ">>> 安装 vlmcsd 相关包 ..."
+./scripts/feeds install -a -p kenzo 2>/dev/null || true
+./scripts/feeds install luci-app-vlmcsd vlmcsd 2>/dev/null || true
+
+# 4. 先执行一次 defconfig，让目标设备配置生效
+echo ">>> 执行 make defconfig (第一次) ..."
+make defconfig
+
+# 5. 强制写入需要的包（必须放在 make defconfig 之后！）
+echo ">>> 强制写入关键包到 .config ..."
 cat <<EOF >> .config
+
+# ---------- NPU 相关 ----------
+CONFIG_PACKAGE_airoha-en7581-npu-firmware=y
+CONFIG_PACKAGE_kmod-airoha-npu=y
+CONFIG_PACKAGE_luci-app-airoha-npu=y
+CONFIG_PACKAGE_luci-i18n-airoha-npu-zh-cn=y
+
+# ---------- VLMCSD ----------
+CONFIG_PACKAGE_vlmcsd=y
+CONFIG_PACKAGE_luci-app-vlmcsd=y
+CONFIG_PACKAGE_luci-i18n-vlmcsd-zh-cn=y
+
+# ---------- 其他你需要的（可按需增减）----------
 CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-app-passwall2=y
 CONFIG_PACKAGE_sing-box=y
 EOF
 
-# 8. 重新 defconfig
+# 6. 再次 defconfig，让刚写入的配置生效
+echo ">>> 执行 make defconfig (第二次) ..."
 make defconfig
 
-echo "✔ 使用 xiangtailiang 源码：已自动启用 NPU / LuCI / collectd / sensors / vlmcsd"
+# 7. 最终验证（方便在 Actions 日志中查看）
+echo "========== 最终 .config 检查 =========="
+grep -E "CONFIG_PACKAGE_airoha-en7581-npu-firmware=y|CONFIG_PACKAGE_luci-app-airoha-npu=y|CONFIG_PACKAGE_luci-app-vlmcsd=y|CONFIG_PACKAGE_kmod-airoha-npu=y" .config || echo "⚠️ 警告：部分包仍未选中！"
+echo "======================================"
+
+echo ">>> diy-part2.sh 执行完毕"
