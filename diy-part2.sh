@@ -19,58 +19,87 @@
 # Modify hostname
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
 
+#!/bin/bash
+set -e
+
+echo ">>> diy-part2.sh 开始"
+
 # ============================================================
-# 针对 xiangtailiang/openwrt + AN7581 (Nokia/Bell XG-040G-MD)
-# 强制编译进：NPU固件 + luci-app-airoha-npu + luci-app-vlmcsd
+# 1. luci-app-airoha-npu（官方没有，必须手动放 + 修复路径）
 # ============================================================
-
-echo ">>> 开始执行 diy-part2.sh"
-
-# 1. 清理可能冲突的旧目录
-rm -rf package/luci-app-airoha-npu 2>/dev/null || true
-rm -rf package/airoha-npu-firmware 2>/dev/null || true
-
-# 2. 手动克隆 luci-app-airoha-npu（第三方包，必须放进 package/）
-echo ">>> 克隆 luci-app-airoha-npu ..."
+rm -rf package/luci-app-airoha-npu
 git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
 
-# 3. 确保 kenzo 源里的 vlmcsd 相关包被安装
-echo ">>> 安装 vlmcsd 相关包 ..."
-./scripts/feeds install -a -p kenzo 2>/dev/null || true
-./scripts/feeds install luci-app-vlmcsd vlmcsd 2>/dev/null || true
+# 关键：修复 Makefile 里错误的相对路径
+sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' package/luci-app-airoha-npu/Makefile
 
-# 4. 先执行一次 defconfig，让目标设备配置生效
-echo ">>> 执行 make defconfig (第一次) ..."
+echo "✔ luci-app-airoha-npu 已放入并修复 Makefile"
+
+# ============================================================
+# 2. vlmcsd + luci-app-vlmcsd（使用 ImmortalWrt 源）
+# ============================================================
+rm -rf package/vlmcsd package/luci-app-vlmcsd /tmp/immortal-tmp
+mkdir -p /tmp/immortal-tmp
+
+git clone --depth=1 https://github.com/immortalwrt/packages.git /tmp/immortal-tmp/packages
+git clone --depth=1 https://github.com/immortalwrt/luci.git /tmp/immortal-tmp/luci
+
+cp -a /tmp/immortal-tmp/packages/net/vlmcsd package/vlmcsd
+cp -a /tmp/immortal-tmp/luci/applications/luci-app-vlmcsd package/luci-app-vlmcsd
+
+# 修复可能的 luci.mk 路径
+if [ -f package/luci-app-vlmcsd/Makefile ]; then
+  sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' package/luci-app-vlmcsd/Makefile 2>/dev/null || true
+fi
+
+rm -rf /tmp/immortal-tmp
+echo "✔ ImmortalWrt 的 vlmcsd + luci-app-vlmcsd 已放入"
+
+# ============================================================
+# 3. 第一次 defconfig（让目标设备和已有包生效）
+# ============================================================
 make defconfig
 
-# 5. 强制写入需要的包（必须放在 make defconfig 之后！）
-echo ">>> 强制写入关键包到 .config ..."
-cat <<EOF >> .config
-
-# ---------- NPU 相关 ----------
+# ============================================================
+# 4. 强制写入需要的包
+# ============================================================
+cat << 'EOF' >> .config
 CONFIG_PACKAGE_airoha-en7581-npu-firmware=y
-CONFIG_PACKAGE_kmod-airoha-npu=y
 CONFIG_PACKAGE_luci-app-airoha-npu=y
 CONFIG_PACKAGE_luci-i18n-airoha-npu-zh-cn=y
-
-# ---------- VLMCSD ----------
 CONFIG_PACKAGE_vlmcsd=y
 CONFIG_PACKAGE_luci-app-vlmcsd=y
 CONFIG_PACKAGE_luci-i18n-vlmcsd-zh-cn=y
-
-# ---------- 其他你需要的（可按需增减）----------
 CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-app-passwall2=y
 CONFIG_PACKAGE_sing-box=y
 EOF
 
-# 6. 再次 defconfig，让刚写入的配置生效
-echo ">>> 执行 make defconfig (第二次) ..."
 make defconfig
 
-# 7. 最终验证（方便在 Actions 日志中查看）
-echo "========== 最终 .config 检查 =========="
-grep -E "CONFIG_PACKAGE_airoha-en7581-npu-firmware=y|CONFIG_PACKAGE_luci-app-airoha-npu=y|CONFIG_PACKAGE_luci-app-vlmcsd=y|CONFIG_PACKAGE_kmod-airoha-npu=y" .config || echo "⚠️ 警告：部分包仍未选中！"
-echo "======================================"
+# ============================================================
+# 5. 再次强制保住（防止被 defconfig 取消）
+# ============================================================
+for pkg in \
+  airoha-en7581-npu-firmware \
+  luci-app-airoha-npu \
+  luci-i18n-airoha-npu-zh-cn \
+  vlmcsd \
+  luci-app-vlmcsd \
+  luci-i18n-vlmcsd-zh-cn
+do
+  sed -i "s/# CONFIG_PACKAGE_${pkg} is not set/CONFIG_PACKAGE_${pkg}=y/" .config 2>/dev/null || true
+  grep -q "CONFIG_PACKAGE_${pkg}=y" .config || echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+done
 
-echo ">>> diy-part2.sh 执行完毕"
+# ============================================================
+# 6. 最终检查
+# ============================================================
+echo ">>> 最终检查："
+echo "--- 目录是否存在 ---"
+ls -d package/luci-app-airoha-npu package/vlmcsd package/luci-app-vlmcsd 2>/dev/null || echo "有目录缺失"
+
+echo "--- .config 关键选项 ---"
+grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|vlmcsd|luci-app-vlmcsd)=y" .config || echo "⚠️ 有包未选中"
+
+echo ">>> diy-part2.sh 结束"
