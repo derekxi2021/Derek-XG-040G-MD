@@ -91,9 +91,25 @@ jobs:
       id: package
       run: |
         cd openwrt
-        # make defconfig
-        # 确保 make defconfig 跑完后 UBI 强开启配置不被抹除
-        # echo "CONFIG_TARGET_ROOTFS_UBI=y" >> .config
+        make defconfig
+        
+        # ========== defconfig 之后强制保住关键包 ==========
+        echo ">>> 强制重新选中关键包（防止被 defconfig 取消）"
+        for pkg in \
+          airoha-en7581-npu-firmware \
+          luci-app-airoha-npu \
+          luci-i18n-airoha-npu-zh-cn \
+          vlmcsd \
+          luci-app-vlmcsd \
+          luci-i18n-vlmcsd-zh-cn
+        do
+          sed -i "s/# CONFIG_PACKAGE_${pkg} is not set/CONFIG_PACKAGE_${pkg}=y/" .config 2>/dev/null || true
+          grep -q "CONFIG_PACKAGE_${pkg}=y" .config || echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+        done
+
+        echo ">>> 验证强制结果："
+        grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|vlmcsd|luci-app-vlmcsd)=y" .config || echo "⚠️ 仍有包未选中"
+        
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
