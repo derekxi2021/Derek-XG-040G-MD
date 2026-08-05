@@ -24,6 +24,45 @@ set -e
 
 echo ">>> diy-part2.sh 开始"
 
+echo "=== Fix AN7581 cpufreq compatible ==="
+
+# 自动找 patches 目录（6.12 / 6.18 都兼容）
+PATCH_DIR=""
+for d in target/linux/airoha/patches-6.18 target/linux/airoha/patches-6.12 target/linux/airoha/patches-6.6; do
+  if [ -d "$d" ]; then
+    PATCH_DIR="$d"
+    break
+  fi
+done
+
+if [ -z "$PATCH_DIR" ]; then
+  echo "WARN: 未找到 airoha patches 目录，跳过 cpufreq 修复"
+else
+  echo "使用补丁目录: $PATCH_DIR"
+
+  # 找 cpufreq 补丁文件
+  CPUFREQ_PATCH=$(ls "$PATCH_DIR"/*cpufreq*airoha* 2>/dev/null | head -1 || true)
+
+  if [ -n "$CPUFREQ_PATCH" ]; then
+    if grep -q 'airoha,an7581' "$CPUFREQ_PATCH"; then
+      echo "✔ cpufreq 补丁已包含 airoha,an7581"
+    else
+      echo "→ 向补丁中注入 airoha,an7581 ..."
+      # match_list 里在 en7581 后加一行 an7581
+      sed -i '/compatible = "airoha,en7581"/a\+\t{ .compatible = "airoha,an7581" },' "$CPUFREQ_PATCH" || true
+      # blocklist 里同样加
+      sed -i '/compatible = "airoha,en7581",/a\+\t{ .compatible = "airoha,an7581", },' "$CPUFREQ_PATCH" || true
+      if grep -q 'airoha,an7581' "$CPUFREQ_PATCH"; then
+        echo "✔ 已写入 an7581 兼容名"
+      else
+        echo "WARN: sed 可能未命中，请手动检查 $CPUFREQ_PATCH"
+      fi
+    fi
+  else
+    echo "WARN: 未找到 *cpufreq*airoha* 补丁文件"
+  fi
+fi
+
 # ============================================================
 # 1. luci-app-airoha-npu（官方没有，必须手动放 + 修复路径）
 # ============================================================
