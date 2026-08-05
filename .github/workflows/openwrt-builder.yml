@@ -102,21 +102,25 @@ jobs:
       run: |
         cd openwrt
     
-        echo "=== 检查最终 .config 是否包含关键包 ==="
-        grep -E "wakeonlan|lm-sensors|airoha-en7581-npu-firmware" .config || true
+        echo "========== 1. .config 关键包是否选中 =========="
+        grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|luci-i18n-airoha-npu|vlmcsd|luci-app-vlmcsd)=y" .config || echo "⚠️ 以上包有缺失"
     
-        echo "=== 检查 NPU / KMS / Statistics 的 LuCI 是否完整存在 ==="
-        find feeds/luci/applications -maxdepth 1 -type d | grep -E "luci-app-airoha-npu|luci-app-vlmcsd|luci-app-statistics" || true
+        echo ""
+        echo "========== 2. package/ 目录是否有 luci-app-airoha-npu =========="
+        if [ -d "package/luci-app-airoha-npu" ]; then
+          echo "✔ package/luci-app-airoha-npu 存在"
+          ls package/luci-app-airoha-npu/
+        else
+          echo "❌ package/luci-app-airoha-npu 不存在！clone 失败"
+        fi
     
-        echo "=== 检查 NPU 固件包是否存在 ==="
-        find package -maxdepth 2 -type d | grep -E "en7581-npu-firmware" || true
+        echo ""
+        echo "========== 3. feeds 里是否有 vlmcsd =========="
+        find feeds -type d -name "*vlmcsd*" 2>/dev/null || echo "❌ feeds 里找不到 vlmcsd"
     
-        echo "=== 检查 AN7581 patch 是否存在 ==="
-        ls target/linux/airoha/an7581 || true
-    
-        echo "=== 检查 AN7581 patch 是否被覆盖 ==="
-        git diff target/linux/airoha/an7581 || true
-
+        echo ""
+        echo "========== 4. 最终确认关键 CONFIG 行 =========="
+        grep -n "airoha-npu\|vlmcsd\|airoha-en7581-npu" .config || true
 
     - name: Compile the firmware
       id: compile
