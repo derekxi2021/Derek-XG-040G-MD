@@ -96,22 +96,22 @@ jobs:
     - name: Debug Check Custom Changes
       run: |
         cd openwrt
-          echo "=== 检查最终 .config 是否包含关键包 ==="
-          grep -E "wakeonlan|lm-sensors|airoha-en7581-npu-firmware" .config || true
-      
-          echo "=== 检查 NPU / LuCI 补丁是否存在 ==="
-          ls package | grep -E "luci-app-airoha-npu|luci-app-vlmcsd|luci-app-statistics" || true
-      
-          echo "=== 检查 NPU 固件包是否存在 ==="
-          ls package | grep -E "airoha-en7581-npu-firmware" || true
-      
-          echo "=== 检查 AN7581 patch 是否存在 ==="
-          ls target/linux/airoha/an7581 || true
-      
-          echo "=== 检查 AN7581 patch 是否被覆盖 ==="
-          git diff target/linux/airoha/an7581 || true
+    
+        echo "=== 检查最终 .config 是否包含关键包 ==="
+        grep -E "wakeonlan|lm-sensors|airoha-en7581-npu-firmware" .config || true
+    
+        echo "=== 检查 NPU / LuCI 补丁是否存在（package/feeds 两处检查） ==="
+        ls -R package feeds | grep -E "luci-app-airoha-npu|luci-app-vlmcsd|luci-app-statistics" || true
+    
+        echo "=== 检查 NPU 固件包是否存在 ==="
+        ls package | grep -E "en7581-npu-firmware" || true
+    
+        echo "=== 检查 AN7581 patch 是否存在 ==="
+        ls target/linux/airoha/an7581 || true
+    
+        echo "=== 检查 AN7581 patch 是否被覆盖 ==="
+        git diff target/linux/airoha/an7581 || true
 
-        
     - name: Compile the firmware
       id: compile
       run: |
