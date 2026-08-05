@@ -26,41 +26,25 @@ echo ">>> diy-part2.sh 开始"
 
 echo "=== Fix AN7581 cpufreq compatible ==="
 
-# 自动找 patches 目录（6.12 / 6.18 都兼容）
-PATCH_DIR=""
-for d in target/linux/airoha/patches-6.18 target/linux/airoha/patches-6.12 target/linux/airoha/patches-6.6; do
-  if [ -d "$d" ]; then
-    PATCH_DIR="$d"
-    break
-  fi
-done
+# 完整覆盖官方修好的 cpufreq / pmdomain 补丁（内核版本需接近）
+PATCH_DIR="target/linux/airoha/patches-6.18"   # 若你是 6.18 就改成 patches-6.18
 
-if [ -z "$PATCH_DIR" ]; then
-  echo "WARN: 未找到 airoha patches 目录，跳过 cpufreq 修复"
-else
-  echo "使用补丁目录: $PATCH_DIR"
+if [ -d "$PATCH_DIR" ]; then
+  # 从 openwrt/openwrt 某已知含修复的 commit 拉文件
+  # 注意：raw 链接里的 commit 可换成 767a8f98942bdd83a351030587788cdf6db8f8ca 或更新的 main
+  BASE="https://raw.githubusercontent.com/openwrt/openwrt/767a8f98942bdd83a351030587788cdf6db8f8ca/target/linux/airoha/patches-6.12"
 
-  # 找 cpufreq 补丁文件
-  CPUFREQ_PATCH=$(ls "$PATCH_DIR"/*cpufreq*airoha* 2>/dev/null | head -1 || true)
+  curl -fsSL "$BASE/039-v6.14-cpufreq-airoha-Add-EN7581-CPUFreq-SMCCC-driver.patch" \
+    -o "$PATCH_DIR/039-v6.14-cpufreq-airoha-Add-EN7581-CPUFreq-SMCCC-driver.patch" || \
+    echo "WARN: 下载 039 失败（可能路径/内核版本不一致）"
 
-  if [ -n "$CPUFREQ_PATCH" ]; then
-    if grep -q 'airoha,an7581' "$CPUFREQ_PATCH"; then
-      echo "✔ cpufreq 补丁已包含 airoha,an7581"
-    else
-      echo "→ 向补丁中注入 airoha,an7581 ..."
-      # match_list 里在 en7581 后加一行 an7581
-      sed -i '/compatible = "airoha,en7581"/a\+\t{ .compatible = "airoha,an7581" },' "$CPUFREQ_PATCH" || true
-      # blocklist 里同样加
-      sed -i '/compatible = "airoha,en7581",/a\+\t{ .compatible = "airoha,an7581", },' "$CPUFREQ_PATCH" || true
-      if grep -q 'airoha,an7581' "$CPUFREQ_PATCH"; then
-        echo "✔ 已写入 an7581 兼容名"
-      else
-        echo "WARN: sed 可能未命中，请手动检查 $CPUFREQ_PATCH"
-      fi
-    fi
-  else
-    echo "WARN: 未找到 *cpufreq*airoha* 补丁文件"
-  fi
+  curl -fsSL "$BASE/040-v6.14-pmdomain-airoha-Add-Airoha-CPU-PM-Domain-support.patch" \
+    -o "$PATCH_DIR/040-v6.14-pmdomain-airoha-Add-Airoha-CPU-PM-Domain-support.patch" || \
+    echo "WARN: 下载 040 失败"
+
+  echo "=== 当前 cpufreq 相关补丁 ==="
+  ls -l "$PATCH_DIR"/*cpufreq*airoha* "$PATCH_DIR"/*pmdomain*airoha* 2>/dev/null || true
+  grep -n "an7581" "$PATCH_DIR"/*cpufreq*airoha* 2>/dev/null || true
 fi
 
 # ============================================================
