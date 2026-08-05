@@ -91,7 +91,7 @@ jobs:
       id: package
       run: |
         cd openwrt
-        make defconfig
+        # make defconfig
         # 确保 make defconfig 跑完后 UBI 强开启配置不被抹除
         # echo "CONFIG_TARGET_ROOTFS_UBI=y" >> .config
         make download -j8
