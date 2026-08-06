@@ -36,9 +36,9 @@ if [ -d "$TARGET_PATCH_DIR" ]; then
 fi
 
 # -----------------------------------------------------------------
-# 2. 追加内核原生参数到 Airoha 平台的 Target Kernel Config (激活 cpufreq 支持)
+# 2. 追加内核原生参数到 Target Kernel Config
 # -----------------------------------------------------------------
-TARGET_KERNEL_CONFIG="target/linux/airoha/config-6.18"
+TARGET_KERNEL_CONFIG=$(find target/linux/airoha/ -name "config-*" 2>/dev/null | head -n 1)
 if [ -f "$TARGET_KERNEL_CONFIG" ]; then
     echo "==> 正在追加 cpufreq 内核参数到 $TARGET_KERNEL_CONFIG ..."
     cat << EOF >> $TARGET_KERNEL_CONFIG
@@ -51,38 +51,58 @@ EOF
 fi
 
 # -----------------------------------------------------------------
-# 3. 修复 EN8811H 2.5G 网口速率协商缺陷 (2500base-x -> usxgmii)
+# 3. 修复 DTS：EN8811H (LAN1) 模式与 CPU OPP 频率节点
 # -----------------------------------------------------------------
-DTS_FILE=$(find target/linux/airoha/ -name "*xg-040g-md*.dts" 2>/dev/null)
+DTS_FILE=$(find target/linux/airoha/ -name "*xg-040g-md*.dts" 2>/dev/null | head -n 1)
 
 if [ -n "$DTS_FILE" ]; then
     echo "==> 找到设备树文件: $DTS_FILE"
-    echo "==> 正在修复 EN8811H phy-mode 配置..."
+    
+    # 修复 LAN1 (gmac1) 速率模式与带内协商
+    echo "==> 正在修复 EN8811H LAN1 phy-mode 及带内协商配置..."
     sed -i 's/phy-mode = "2500base-x";/phy-mode = "usxgmii";/g' $DTS_FILE
-else
-    echo "==> 提示: 未在 target/linux/airoha 中检索到 xg-040g-md DTS，跳过 DTS 修改。"
-fi
+    if ! grep -q "managed = \"in-band-status\"" $DTS_FILE; then
+        sed -i '/phy-mode = "usxgmii";/a \tmanaged = "in-band-status";' $DTS_FILE
+    fi
 
-# -----------------------------------------------------------------
-# 4. 追加根目录 .config 软件包与 devmem / cpufreq 选项
-# -----------------------------------------------------------------
-echo "==> 追加 OpenWrt 软件包与 Busybox devmem 配置到 .config ..."
-cat << EOF >> .config
+    # 修复 CPU OPP 报错 (在 DTS 末尾追加默认 OPP 表以消除 deferred probe 报错)
+    if ! grep -q "cpu_opp_table" $DTS_FILE; then
+        echo "==> 正在向 DTS 补全 cpu_opp_table 以解决 cpufreq deferred probe 警告..."
+        cat << 'EOF' >> $DTS_FILE
 
-# Devmem & Debug 支持
-CONFIG_KERNEL_DEVMEM=y
-CONFIG_BUSYBOX_CUSTOM=y
-CONFIG_BUSYBOX_CONFIG_DEVMEM=y
-CONFIG_KERNEL_DEBUG_FS=y
+&cpus {
+	cpu_opp_table: opp-table {
+		compatible = "operating-points-v2";
+		opp-shared;
 
-# CPU 调频 kmod 驱动与策略
-CONFIG_PACKAGE_kmod-cpufreq-dt=y
-CONFIG_PACKAGE_kmod-cpufreq-governor-performance=y
-CONFIG_PACKAGE_kmod-cpufreq-governor-ondemand=y
-CONFIG_PACKAGE_kmod-cpufreq-governor-conservative=y
+		opp-1200000000 {
+			opp-hz = /bits/ 64 <1200000000>;
+			clock-latency-ns = <200000>;
+		}
+		opp-2000000000 {
+			opp-hz = /bits/ 64 <2000000000>;
+			clock-latency-ns = <200000>;
+		};
+	};
+};
+
+&cpu0 {
+	operating-points-v2 = <&cpu_opp_table>;
+};
+&cpu1 {
+	operating-points-v2 = <&cpu_opp_table>;
+};
+&cpu2 {
+	operating-points-v2 = <&cpu_opp_table>;
+};
+&cpu3 {
+	operating-points-v2 = <&cpu_opp_table>;
+};
 EOF
-
-echo "==> diy-part2.sh CPU和EN8811H修补流程执行完毕！"
+    fi
+else
+    echo "==> ⚠️ 警告: 未检索到 xg-040g-md DTS 文件！"
+fi
 
 # ============================================================
 # 1. luci-app-airoha-npu（官方没有，必须手动放 + 修复路径）
@@ -135,6 +155,11 @@ CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-app-passwall2=y
 CONFIG_PACKAGE_sing-box=y
 
+# 【修复 LAN1的关键】EN8811H PHY 驱动与 MD32 固件
+CONFIG_PACKAGE_kmod-phy-airoha=y
+CONFIG_PACKAGE_airoha-en8811h-firmware=y
+CONFIG_PACKAGE_ethtool=y
+
 # Devmem & Debug 支持
 CONFIG_KERNEL_DEVMEM=y
 CONFIG_BUSYBOX_CUSTOM=y
@@ -155,6 +180,9 @@ make defconfig
 # ============================================================
 for pkg in \
   airoha-en7581-npu-firmware \
+  airoha-en8811h-firmware \
+  kmod-phy-airoha \
+  ethtool \
   luci-app-airoha-npu \
   luci-i18n-airoha-npu-zh-cn \
   vlmcsd \
@@ -177,6 +205,6 @@ echo "--- 目录是否存在 ---"
 ls -d package/luci-app-airoha-npu package/vlmcsd package/luci-app-vlmcsd 2>/dev/null || echo "⚠️ 有目录缺失"
 
 echo "--- .config 关键选项 ---"
-grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|vlmcsd|luci-app-vlmcsd|kmod-cpufreq-dt)=y" .config || echo "⚠️ 有包未选中"
+grep -E "CONFIG_PACKAGE_(kmod-phy-airoha|airoha-en8811h-firmware|kmod-cpufreq-dt)=y" .config || echo "⚠️ 警告：EN8811H 驱动或 cpufreq 模块未正确选中！"
 
 echo ">>> diy-part2.sh 执行成功结束！"
