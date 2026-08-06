@@ -24,28 +24,21 @@ set -e
 
 echo ">>> diy-part2.sh 开始"
 
-echo "=== Fix AN7581 cpufreq compatible ==="
-
-# 完整覆盖官方修好的 cpufreq / pmdomain 补丁（内核版本需接近）
-PATCH_DIR="target/linux/airoha/patches-6.18"   # 若你是 6.18 就改成 patches-6.18
-
-if [ -d "$PATCH_DIR" ]; then
-  # 从 openwrt/openwrt 某已知含修复的 commit 拉文件
-  # 注意：raw 链接里的 commit 可换成 767a8f98942bdd83a351030587788cdf6db8f8ca 或更新的 main
-  BASE="https://raw.githubusercontent.com/openwrt/openwrt/767a8f98942bdd83a351030587788cdf6db8f8ca/target/linux/airoha/patches-6.12"
-
-  curl -fsSL "$BASE/039-v6.14-cpufreq-airoha-Add-EN7581-CPUFreq-SMCCC-driver.patch" \
-    -o "$PATCH_DIR/039-v6.14-cpufreq-airoha-Add-EN7581-CPUFreq-SMCCC-driver.patch" || \
-    echo "WARN: 下载 039 失败（可能路径/内核版本不一致）"
-
-  curl -fsSL "$BASE/040-v6.14-pmdomain-airoha-Add-Airoha-CPU-PM-Domain-support.patch" \
-    -o "$PATCH_DIR/040-v6.14-pmdomain-airoha-Add-Airoha-CPU-PM-Domain-support.patch" || \
-    echo "WARN: 下载 040 失败"
-
-  echo "=== 当前 cpufreq 相关补丁 ==="
-  ls -l "$PATCH_DIR"/*cpufreq*airoha* "$PATCH_DIR"/*pmdomain*airoha* 2>/dev/null || true
-  grep -n "an7581" "$PATCH_DIR"/*cpufreq*airoha* 2>/dev/null || true
+# 自动清理可能存在的冲突补丁，作为编译保险
+TARGET_PATCH_DIR="target/linux/airoha/patches-6.18"
+if [ -d "$TARGET_PATCH_DIR" ]; then
+    echo "==> 正在清理可能导致冲突的重复 cpufreq 补丁..."
+    rm -f $TARGET_PATCH_DIR/*cpufreq*.patch
+    rm -f $TARGET_PATCH_DIR/*pmdomain*.patch
 fi
+# 追加内核原生参数到 Airoha 平台的 kernel config 中
+cat << EOF >> target/linux/airoha/config-6.18
+CONFIG_CPU_FREQ=y
+CONFIG_CPU_FREQ_STAT=y
+CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
+CONFIG_CPU_FREQ_GOV_ONDEMAND=y
+CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y
+EOF
 
 # ============================================================
 # 1. luci-app-airoha-npu（官方没有，必须手动放 + 修复路径）
