@@ -53,22 +53,20 @@ fi
 # -----------------------------------------------------------------
 # 3. 修复 DTS：EN8811H (LAN1) 模式与 CPU OPP 频率节点
 # -----------------------------------------------------------------
+
 DTS_FILE=$(find target/linux/airoha/ -name "*xg-040g-md*.dts" 2>/dev/null | head -n 1)
 
 if [ -n "$DTS_FILE" ]; then
     echo "==> 找到设备树文件: $DTS_FILE"
     
-    # 修复 LAN1 (gmac1) 速率模式与带内协商
+    # 修复 LAN1 (gmac1) 速率模式
     echo "==> 正在修复 EN8811H LAN1 phy-mode 及带内协商配置..."
-    sed -i 's/phy-mode = "2500base-x";/phy-mode = "usxgmii";/g' $DTS_FILE
-    if ! grep -q "managed = \"in-band-status\"" $DTS_FILE; then
-        sed -i '/phy-mode = "usxgmii";/a \tmanaged = "in-band-status";' $DTS_FILE
-    fi
+    sed -i 's/phy-mode = "2500base-x";/phy-mode = "usxgmii";/g' "$DTS_FILE"
 
-    # 修复 CPU OPP 报错 (在 DTS 末尾追加默认 OPP 表以消除 deferred probe 报错)
-    if ! grep -q "cpu_opp_table" $DTS_FILE; then
+    # 修复 CPU OPP 报错 (注意：节点声明必须带结尾分号 ;)
+    if ! grep -q "cpu_opp_table" "$DTS_FILE"; then
         echo "==> 正在向 DTS 补全 cpu_opp_table 以解决 cpufreq deferred probe 警告..."
-        cat << 'EOF' >> $DTS_FILE
+        cat << 'EOF' >> "$DTS_FILE"
 
 &cpus {
 	cpu_opp_table: opp-table {
@@ -78,7 +76,7 @@ if [ -n "$DTS_FILE" ]; then
 		opp-1200000000 {
 			opp-hz = /bits/ 64 <1200000000>;
 			clock-latency-ns = <200000>;
-		}
+		};  <-- 补全了分号 ';'
 		opp-2000000000 {
 			opp-hz = /bits/ 64 <2000000000>;
 			clock-latency-ns = <200000>;
@@ -157,6 +155,9 @@ echo "✔ 冲突包清理完毕！"
 # 3. 第一次 defconfig（让目标设备和已有包生效）
 # ============================================================
 make defconfig
+
+# 安全净化：防止旧的 .config 引入 bell 命名的设备标记
+sed -i 's/CONFIG_TARGET_airoha_an7581_DEVICE_bell_xg-040g-md/CONFIG_TARGET_airoha_an7581_DEVICE_nokia_xg-040g-md/g' .config 2>/dev/null || true
 
 # ============================================================
 # 4. 强制写入需要的包
