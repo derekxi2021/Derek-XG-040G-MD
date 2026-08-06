@@ -181,4 +181,11 @@ echo "CONFIG_ARM_AIROHA_SOC_CPUFREQ=y" >> target/linux/airoha/config-default
 echo "CONFIG_ARM_CPUFREQ_DT=y" >> target/linux/airoha/config-default
 
 echo "==> 6.18 CPUFreq safe patch script executed!"
+
+# 修复LAN1：
+cat << 'EOF' >> target/linux/airoha/base-files/etc/board.d/02_network
+# 确保 lan1 拥有独立的 MAC 地址
+[ -d /sys/class/net/lan1 ] && macaddr_add $(cat /sys/class/net/eth0/address) 1 > /sys/class/net/lan1/address
+EOF
+
 echo ">>> diy-part2.sh 执行成功结束！"
