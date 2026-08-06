@@ -136,6 +136,24 @@ rm -rf /tmp/immortal-tmp
 echo "✔ ImmortalWrt 的 vlmcsd + luci-app-vlmcsd 已放入"
 
 # ============================================================
+# 【在此处插入】清理会导致 Kconfig 循环依赖的冲突包
+# ============================================================
+echo "==> 正在清理冲突包以修复 Kconfig 循环依赖报错..."
+
+# 1. 移除冲突的 homeproxy / fchomo / momo（解决 sing-box 依赖死锁）
+find feeds/ -type d -name "luci-app-homeproxy" -exec rm -rf {} + 2>/dev/null || true
+find feeds/ -type d -name "luci-app-fchomo" -exec rm -rf {} + 2>/dev/null || true
+find feeds/ -type d -name "luci-app-momo" -exec rm -rf {} + 2>/dev/null || true
+find feeds/ -type d -name "momo" -exec rm -rf {} + 2>/dev/null || true
+find package/ -type d -name "luci-app-homeproxy" -exec rm -rf {} + 2>/dev/null || true
+
+# 2. 清理无法满足依赖的 dae / daed
+rm -rf feeds/helloworld/dae feeds/helloworld/daed
+
+echo "✔ 冲突包清理完毕！"
+# ============================================================
+
+# ============================================================
 # 3. 第一次 defconfig（让目标设备和已有包生效）
 # ============================================================
 make defconfig
