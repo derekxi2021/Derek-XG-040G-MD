@@ -160,48 +160,47 @@ echo "--- .config 关键选项 ---"
 grep -E "CONFIG_PACKAGE_(kmod-phy-airoha|airoha-en8811h-firmware|kmod-cpufreq-dt)=y" .config || echo "⚠️ 警告：EN8811H 驱动或 cpufreq 模块未正确选中！"
 
 # =====================================================================
-# 安全兼容 Kernel 6.18 的 Airoha CPUFreq 修复（零编译失败风险）
+# 安全兼容 Kernel 6.18 的 CPUFreq 与 Devmem 内核级配置
 # =====================================================================
-echo "==> Safely patching airoha-cpufreq.c for Kernel 6.18..."
+echo "==> Enabling generic CPUFreq & Unsetting STRICT_DEVMEM..."
 
-# 1. 找到内核驱动源码中的 airoha-cpufreq.c 文件（自动兼容任意内核目录）
-TARGET_C_FILE=$(find target/linux/airoha/ -name "airoha-cpufreq.c" 2>/dev/null)
+# 1. 允许 devmem 读取所有物理地址（防止开机读寄存器 0xDEADBEEF）
+find target/linux/airoha/ -name "config-*" -exec sed -i 's/CONFIG_STRICT_DEVMEM=y/# CONFIG_STRICT_DEVMEM is not set/g' {} +
+find target/linux/airoha/ -name "config-*" -exec sed -i 's/CONFIG_IO_STRICT_DEVMEM=y/# CONFIG_IO_STRICT_DEVMEM is not set/g' {} +
 
-if [ -f "$TARGET_C_FILE" ]; then
-    # 使用 sed 动态将失败返回注释掉，即使找不到对应字符串也不会中断编译
-    sed -i '/dev_pm_opp_set_config/,/return ret;/ s/return ret;\/\/\ safe_bypass/' "$TARGET_C_FILE"
-    echo "==> Successfully bypassed OPP error check in $TARGET_C_FILE"
-else
-    # 如果 6.18 驱动已被主线社区彻底重构成 SMCCC，创建安全的 patches-6.18 兜底
-    mkdir -p target/linux/airoha/patches-6.18
+# 2. 强行在全局内核配置中开启 cpufreq-dt 驱动
+KCONFIG_DEFAULT="target/linux/airoha/config-default"
+if [ -f "$KCONFIG_DEFAULT" ]; then
+    grep -q "CONFIG_ARM_CPUFREQ_DT=y" "$KCONFIG_DEFAULT" || echo "CONFIG_ARM_CPUFREQ_DT=y" >> "$KCONFIG_DEFAULT"
+    grep -q "CONFIG_CPU_FREQ=y" "$KCONFIG_DEFAULT" || echo "CONFIG_CPU_FREQ=y" >> "$KCONFIG_DEFAULT"
 fi
 
-# 2. 补全必要的 Kernel 配置，防止组件缺失
-echo "CONFIG_ARM_AIROHA_SOC_CPUFREQ=y" >> target/linux/airoha/config-default
-echo "CONFIG_ARM_CPUFREQ_DT=y" >> target/linux/airoha/config-default
+echo "==> Enabling generic CPUFreq & Unsetting STRICT_DEVMEM script executed!"
 
-echo "==> 6.18 CPUFreq safe patch script executed!"
+# =====================================================================
+# 修补 LAN1 (EN8811H) & 动态 MAC 地址 (+1)
+# =====================================================================
+echo "==> Safe patching 02_network for LAN1 / EN8811H & Dynamic MAC+1..."
 
-# 修复LAN1：
 TARGET_NET=$(find target/linux/airoha/ -name "02_network" 2>/dev/null)
 
 if [ -n "$TARGET_NET" ]; then
     for net_file in $TARGET_NET; do
         echo "Modifying network board file: $net_file"
         
-        # 1. 确保 lan1 包含在默认 lan 接口定义中
+        # 1. 保证 lan1 在默认 lan 桥接组中
         if grep -q "lan)" "$net_file"; then
             sed -i 's/ucidef_set_interfaces_lan_wan .*/ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"/' "$net_file" 2>/dev/null || true
         fi
 
-        # 2. 动态读取板载基准 MAC (label_mac)，通过 macaddr_add 自动加 1 后给 lan1
+        # 2. 动态读取贴纸 MAC ($label_mac) 计算 +1 并赋给 lan1
         if ! grep -q "macaddr_add.*1" "$net_file"; then
             sed -i '/ucidef_set_interfaces_lan_wan/a \	local lan1_mac=$(macaddr_add "$label_mac" 1)\n\tucidef_set_interface_macaddr "lan1" "$lan1_mac"' "$net_file" 2>/dev/null || true
         fi
     done
-    echo "✔ 02_network patched with dynamic MAC+1 logic!"
+    echo "✔ 02_network patched successfully with dynamic MAC+1!"
 else
-    echo "Warning: 02_network file not found, skipping."
+    echo "⚠️ Warning: 02_network file not found, skipping."
 fi
 
 echo ">>> diy-part2.sh 执行成功结束！"
