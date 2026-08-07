@@ -111,6 +111,7 @@ CONFIG_PACKAGE_sing-box=y
 CONFIG_PACKAGE_kmod-phy-airoha=y
 CONFIG_PACKAGE_airoha-en8811h-firmware=y
 CONFIG_PACKAGE_ethtool=y
+EOF
 
 # ============================================================
 # Devmem & Debug 支持 + CPU 调频 kmod 模块
