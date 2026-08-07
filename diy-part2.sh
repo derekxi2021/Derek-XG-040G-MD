@@ -112,14 +112,19 @@ CONFIG_PACKAGE_kmod-phy-airoha=y
 CONFIG_PACKAGE_airoha-en8811h-firmware=y
 CONFIG_PACKAGE_ethtool=y
 
+# ============================================================
+# Devmem & Debug 支持 + CPU 调频 kmod 模块
+# ============================================================
+cat << 'EOF' >> .config
 # Devmem & Debug 支持
 CONFIG_KERNEL_DEVMEM=y
 CONFIG_BUSYBOX_CUSTOM=y
 CONFIG_BUSYBOX_CONFIG_DEVMEM=y
 CONFIG_KERNEL_DEBUG_FS=y
 
-# CPU 调频 kmod 模块
+# CPU 调频 kmod 模块 (补充补全 schedutil)
 CONFIG_PACKAGE_kmod-cpufreq-dt=y
+CONFIG_PACKAGE_kmod-cpufreq-governor-schedutil=y
 CONFIG_PACKAGE_kmod-cpufreq-governor-performance=y
 CONFIG_PACKAGE_kmod-cpufreq-governor-ondemand=y
 CONFIG_PACKAGE_kmod-cpufreq-governor-conservative=y
@@ -141,6 +146,7 @@ for pkg in \
   luci-app-vlmcsd \
   luci-i18n-vlmcsd-zh-cn \
   kmod-cpufreq-dt \
+  kmod-cpufreq-governor-schedutil \
   kmod-cpufreq-governor-performance \
   kmod-cpufreq-governor-ondemand \
   kmod-cpufreq-governor-conservative
@@ -160,7 +166,7 @@ echo "--- .config 关键选项 ---"
 grep -E "CONFIG_PACKAGE_(kmod-phy-airoha|airoha-en8811h-firmware|kmod-cpufreq-dt)=y" .config || echo "⚠️ 警告：EN8811H 驱动或 cpufreq 模块未正确选中！"
 
 # =====================================================================
-# 安全兼容 Kernel 6.18 的 CPUFreq 与 Devmem 内核级配置
+# 安全兼容 Kernel 的 CPUFreq 与 Devmem 内核级全局配置修补
 # =====================================================================
 echo "==> Enabling generic CPUFreq & Unsetting STRICT_DEVMEM..."
 
@@ -168,19 +174,31 @@ echo "==> Enabling generic CPUFreq & Unsetting STRICT_DEVMEM..."
 find target/linux/airoha/ -name "config-*" -exec sed -i 's/CONFIG_STRICT_DEVMEM=y/# CONFIG_STRICT_DEVMEM is not set/g' {} +
 find target/linux/airoha/ -name "config-*" -exec sed -i 's/CONFIG_IO_STRICT_DEVMEM=y/# CONFIG_IO_STRICT_DEVMEM is not set/g' {} +
 
-# 2. 强行在全局内核配置中开启 cpufreq-dt 驱动
-KCONFIG_DEFAULT="target/linux/airoha/config-default"
-if [ -f "$KCONFIG_DEFAULT" ]; then
-    grep -q "CONFIG_ARM_CPUFREQ_DT=y" "$KCONFIG_DEFAULT" || echo "CONFIG_ARM_CPUFREQ_DT=y" >> "$KCONFIG_DEFAULT"
-    grep -q "CONFIG_CPU_FREQ=y" "$KCONFIG_DEFAULT" || echo "CONFIG_CPU_FREQ=y" >> "$KCONFIG_DEFAULT"
-fi
+# 2. 强行在 target 下【所有的】config-* 文件中追加 Airoha/MTK 必备的 CPUFreq 底层内核宏
+for cfg in $(find target/linux/airoha/ -name "config-*"); do
+    echo "正在修补内核配置文件: $cfg"
+    cat << 'EOF' >> "$cfg"
+CONFIG_CPU_FREQ=y
+CONFIG_CPU_FREQ_STAT=y
+CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
+CONFIG_CPU_FREQ_GOV_POWERSAVE=y
+CONFIG_CPU_FREQ_GOV_USERSPACE=y
+CONFIG_CPU_FREQ_GOV_ONDEMAND=y
+CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y
+CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
+CONFIG_CPU_THERMAL=y
+CONFIG_ARM_CPUFREQ_DT=y
+CONFIG_ARM_MEDIATEK_CPUFREQ=y
+CONFIG_PM_OPP=y
+EOF
+done
 
 echo "==> Enabling generic CPUFreq & Unsetting STRICT_DEVMEM script executed!"
 
 # =====================================================================
-# 修补 LAN1 (EN8811H) & 动态 MAC 地址 (+1)
+# 修补 02_network: 仅注入动态 MAC 地址 (+1)
 # =====================================================================
-echo "==> Safe patching 02_network for LAN1 / EN8811H & Dynamic MAC+1..."
+echo "==> Safe patching 02_network for Dynamic MAC+1..."
 
 TARGET_NET=$(find target/linux/airoha/ -name "02_network" 2>/dev/null)
 
@@ -188,17 +206,17 @@ if [ -n "$TARGET_NET" ]; then
     for net_file in $TARGET_NET; do
         echo "Modifying network board file: $net_file"
         
-        # 1. 保证 lan1 在默认 lan 桥接组中
-        if grep -q "lan)" "$net_file"; then
-            sed -i 's/ucidef_set_interfaces_lan_wan .*/ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"/' "$net_file" 2>/dev/null || true
-        fi
+        # 清理旧的可能导致错误的修补代码
+        sed -i '/lan1_mac=/d' "$net_file" 2>/dev/null || true
+        sed -i '/ucidef_set_interface_macaddr "lan1"/d' "$net_file" 2>/dev/null || true
 
-        # 2. 动态读取贴纸 MAC ($label_mac) 计算 +1 并赋给 lan1
-        if ! grep -q "macaddr_add.*1" "$net_file"; then
-            sed -i '/ucidef_set_interfaces_lan_wan/a \	local lan1_mac=$(macaddr_add "$label_mac" 1)\n\tucidef_set_interface_macaddr "lan1" "$lan1_mac"' "$net_file" 2>/dev/null || true
+        # 仅针对 label_mac 做 +1 处理并注入 lan_mac
+        if ! grep -q "macaddr_add.*label_mac.*1" "$net_file"; then
+            # 在 label_mac 赋值行之后插入，使用 OpenWrt 官方原生安全的 macaddr_add 函数
+            sed -i '/label_mac=/a \	wan_mac=$(macaddr_add "$label_mac" 1)' "$net_file" 2>/dev/null || true
         fi
     done
-    echo "✔ 02_network patched successfully with dynamic MAC+1!"
+    echo "✔ 02_network patched successfully for Dynamic MAC+1!"
 else
     echo "⚠️ Warning: 02_network file not found, skipping."
 fi
