@@ -67,25 +67,24 @@ rm -rf /tmp/immortal-tmp
 echo "✔ ImmortalWrt 的 vlmcsd + luci-app-vlmcsd 已放入"
 
 # ============================================================
-# 【在此处插入】清理会导致 Kconfig 循环依赖的冲突包
+# 3. 清理会导致 Kconfig 循环依赖的冲突包
 # ============================================================
 echo "==> 正在清理冲突包以修复 Kconfig 循环依赖报错..."
 
-# 1. 移除冲突的 homeproxy / fchomo / momo（解决 sing-box 依赖死锁）
+# 移除冲突的 homeproxy / fchomo / momo（解决 sing-box 依赖死锁）
 find feeds/ -type d -name "luci-app-homeproxy" -exec rm -rf {} + 2>/dev/null || true
 find feeds/ -type d -name "luci-app-fchomo" -exec rm -rf {} + 2>/dev/null || true
 find feeds/ -type d -name "luci-app-momo" -exec rm -rf {} + 2>/dev/null || true
 find feeds/ -type d -name "momo" -exec rm -rf {} + 2>/dev/null || true
 find package/ -type d -name "luci-app-homeproxy" -exec rm -rf {} + 2>/dev/null || true
 
-# 2. 清理无法满足依赖的 dae / daed
+# 清理无法满足依赖的 dae / daed
 rm -rf feeds/helloworld/dae feeds/helloworld/daed
 
 echo "✔ 冲突包清理完毕！"
-# ============================================================
 
 # ============================================================
-# 3. 第一次 defconfig（让目标设备和已有包生效）
+# 4. 第一次 defconfig（让目标设备和已有包生效）
 # ============================================================
 make defconfig
 
@@ -93,7 +92,7 @@ make defconfig
 sed -i 's/CONFIG_TARGET_airoha_an7581_DEVICE_bell_xg-040g-md/CONFIG_TARGET_airoha_an7581_DEVICE_nokia_xg-040g-md/g' .config 2>/dev/null || true
 
 # ============================================================
-# 4. 强制写入需要的包
+# 5. 强制写入需要的包（已合并闭合 cat EOF，防止格式错乱）
 # ============================================================
 cat << 'EOF' >> .config
 # NPU & 核心 App
@@ -107,23 +106,18 @@ CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-app-passwall2=y
 CONFIG_PACKAGE_sing-box=y
 
-# 【修复 LAN1的关键】EN8811H PHY 驱动与 MD32 固件
+# EN8811H PHY 驱动与 MD32 固件
 CONFIG_PACKAGE_kmod-phy-airoha=y
 CONFIG_PACKAGE_airoha-en8811h-firmware=y
 CONFIG_PACKAGE_ethtool=y
-EOF
 
-# ============================================================
-# Devmem & Debug 支持 + CPU 调频 kmod 模块
-# ============================================================
-cat << 'EOF' >> .config
 # Devmem & Debug 支持
 CONFIG_KERNEL_DEVMEM=y
 CONFIG_BUSYBOX_CUSTOM=y
 CONFIG_BUSYBOX_CONFIG_DEVMEM=y
 CONFIG_KERNEL_DEBUG_FS=y
 
-# CPU 调频 kmod 模块 (补充补全 schedutil)
+# CPU 调频 kmod 模块
 CONFIG_PACKAGE_kmod-cpufreq-dt=y
 CONFIG_PACKAGE_kmod-cpufreq-governor-schedutil=y
 CONFIG_PACKAGE_kmod-cpufreq-governor-performance=y
@@ -134,7 +128,7 @@ EOF
 make defconfig
 
 # ============================================================
-# 5. 再次强制保住（防止被 defconfig 取消）
+# 6. 再次强制保住包选择（防止被 defconfig 取消）
 # ============================================================
 for pkg in \
   airoha-en7581-npu-firmware \
@@ -156,16 +150,6 @@ do
   grep -q "CONFIG_PACKAGE_${pkg}=y" .config || echo "CONFIG_PACKAGE_${pkg}=y" >> .config
 done
 
-# ============================================================
-# 6. 最终检查
-# ============================================================
-echo ">>> 最终检查："
-echo "--- 目录是否存在 ---"
-ls -d package/luci-app-airoha-npu package/vlmcsd package/luci-app-vlmcsd 2>/dev/null || echo "⚠️ 有目录缺失"
-
-echo "--- .config 关键选项 ---"
-grep -E "CONFIG_PACKAGE_(kmod-phy-airoha|airoha-en8811h-firmware|kmod-cpufreq-dt)=y" .config || echo "⚠️ 警告：EN8811H 驱动或 cpufreq 模块未正确选中！"
-
 # =====================================================================
 # 安全兼容 Kernel 的 CPUFreq 与 Devmem 内核级全局配置修补
 # =====================================================================
@@ -175,7 +159,7 @@ echo "==> Enabling generic CPUFreq & Unsetting STRICT_DEVMEM..."
 find target/linux/airoha/ -name "config-*" -exec sed -i 's/CONFIG_STRICT_DEVMEM=y/# CONFIG_STRICT_DEVMEM is not set/g' {} +
 find target/linux/airoha/ -name "config-*" -exec sed -i 's/CONFIG_IO_STRICT_DEVMEM=y/# CONFIG_IO_STRICT_DEVMEM is not set/g' {} +
 
-# 2. 强行在 target 下【所有的】config-* 文件中追加 Airoha/MTK 必备的 CPUFreq 底层内核宏
+# 2. 强行在 target 下【所有的】config-* 文件中追加 Airoha/MTK 必备的 CPUFreq 底层内核宏 + 防卡死宏
 for cfg in $(find target/linux/airoha/ -name "config-*"); do
     echo "正在修补内核配置文件: $cfg"
     cat << 'EOF' >> "$cfg"
@@ -191,6 +175,9 @@ CONFIG_CPU_THERMAL=y
 CONFIG_ARM_CPUFREQ_DT=y
 CONFIG_ARM_MEDIATEK_CPUFREQ=y
 CONFIG_PM_OPP=y
+# CONFIG_UCLAMP_TASK is not set
+# CONFIG_UCLAMP_BUCKETS_COUNT is not set
+CONFIG_ENERGY_MODEL=y
 EOF
 done
 
@@ -213,7 +200,6 @@ if [ -n "$TARGET_NET" ]; then
 
         # 仅针对 label_mac 做 +1 处理并注入 lan_mac
         if ! grep -q "macaddr_add.*label_mac.*1" "$net_file"; then
-            # 在 label_mac 赋值行之后插入，使用 OpenWrt 官方原生安全的 macaddr_add 函数
             sed -i '/label_mac=/a \	wan_mac=$(macaddr_add "$label_mac" 1)' "$net_file" 2>/dev/null || true
         fi
     done
@@ -221,5 +207,15 @@ if [ -n "$TARGET_NET" ]; then
 else
     echo "⚠️ Warning: 02_network file not found, skipping."
 fi
+
+# ============================================================
+# 7. 最终检查与验证
+# ============================================================
+echo ">>> 最终检查："
+echo "--- 目录是否存在 ---"
+ls -d package/luci-app-airoha-npu package/vlmcsd package/luci-app-vlmcsd 2>/dev/null || echo "⚠️ 有目录缺失"
+
+echo "--- .config 关键选项 ---"
+grep -E "CONFIG_PACKAGE_(kmod-phy-airoha|airoha-en8811h-firmware|kmod-cpufreq-dt)=y" .config || echo "⚠️ 警告：EN8811H 驱动或 cpufreq 模块未正确选中！"
 
 echo ">>> diy-part2.sh 执行成功结束！"
