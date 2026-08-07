@@ -186,9 +186,20 @@ echo "==> 6.18 CPUFreq safe patch script executed!"
 TARGET_NET=$(find target/linux/airoha/ -name "02_network" 2>/dev/null)
 
 if [ -n "$TARGET_NET" ]; then
-    echo "Found 02_network at: $TARGET_NET"
-    # 对找到的文件进行修改，例如：
-    # sed -i 's/lan1/lan1 lan2/' $TARGET_NET
+    for net_file in $TARGET_NET; do
+        echo "Modifying network board file: $net_file"
+        
+        # 1. 确保 lan1 包含在默认 lan 接口定义中
+        if grep -q "lan)" "$net_file"; then
+            sed -i 's/ucidef_set_interfaces_lan_wan .*/ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"/' "$net_file" 2>/dev/null || true
+        fi
+
+        # 2. 动态读取板载基准 MAC (label_mac)，通过 macaddr_add 自动加 1 后给 lan1
+        if ! grep -q "macaddr_add.*1" "$net_file"; then
+            sed -i '/ucidef_set_interfaces_lan_wan/a \	local lan1_mac=$(macaddr_add "$label_mac" 1)\n\tucidef_set_interface_macaddr "lan1" "$lan1_mac"' "$net_file" 2>/dev/null || true
+        fi
+    done
+    echo "✔ 02_network patched with dynamic MAC+1 logic!"
 else
     echo "Warning: 02_network file not found, skipping."
 fi
