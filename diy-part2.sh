@@ -18,13 +18,13 @@ echo "==> 正在对 uboot-airoha/Makefile 进行底层安全打补丁..."
 find package/ -type f -path "*/uboot-airoha/Makefile" | while read -r mkfile; do
     echo "正在修补: $mkfile"
     
-    # 策略 1: 只要编译结束，就防患于未然——强制在 PKG_BUILD_DIR 根目录下建立 u-boot.dtb 占位文件（如果不存在）
-    # 这样后续任何 CP/INSTALL 指令都不会因找不到文件而溃败
-    if ! grep -q "touch \$(PKG_BUILD_DIR)/u-boot.dtb" "$mkfile"; do
+    # 策略 1: 编译完成后，若 PKG_BUILD_DIR 根目录下没有 u-boot.dtb，则自动 touch 一个占位文件
+    # 避免后续 install 指令因为源文件不存在而爆出 Error 127
+    if ! grep -q "touch \$(PKG_BUILD_DIR)/u-boot.dtb" "$mkfile"; then
         sed -i '/define Build\/Compile/a \t[ -f $(PKG_BUILD_DIR)/u-boot.dtb ] || touch $(PKG_BUILD_DIR)/u-boot.dtb' "$mkfile"
     fi
 
-    # 策略 2: 替换所有可能产生 Error 127 的 $(INSTALL_DATA) 指令，强制容错
+    # 策略 2: 容错处理所有的安装与复制指令
     sed -i 's/$(INSTALL_DATA) \(.*u-boot\.dtb\)/[ -f \1 ] \&\& $(INSTALL_DATA) \1 || true/g' "$mkfile"
     sed -i 's/install -m0644 \(.*u-boot\.dtb\)/[ -f \1 ] \&\& install -m0644 \1 || true/g' "$mkfile"
     sed -i 's/$(CP) \(.*u-boot\.dtb\)/[ -f \1 ] \&\& $(CP) \1 || true/g' "$mkfile"
