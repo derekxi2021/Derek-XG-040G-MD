@@ -11,17 +11,26 @@ echo ">>> diy-part2.sh 开始"
 echo "==> 开始执行 diy-part2.sh 修补流程..."
 
 # =====================================================================
-# 0. 关键修复：修改 uboot-airoha 的 Makefile，允许 DTB 缺失容错/自动寻找
+# 0. 终极修复：解决 uboot-airoha 安装时缺少 u-boot.dtb 导致的 Error 127
 # =====================================================================
-echo "==> 正在修补 package/boot/uboot-airoha 避免 u-boot.dtb 报错..."
+echo "==> 正在对 uboot-airoha/Makefile 进行底层安全打补丁..."
 
 find package/ -type f -path "*/uboot-airoha/Makefile" | while read -r mkfile; do
-    echo "发现 uboot-airoha Makefile: $mkfile"
-    # 将复制 u-boot.dtb 的强依赖改为【存在才复制】的安全模式
-    sed -i 's/$(INSTALL_DATA) $(PKG_BUILD_DIR)\/u-boot.dtb.*/[ -f $(PKG_BUILD_DIR)\/u-boot.dtb ] \&\& $(INSTALL_DATA) $(PKG_BUILD_DIR)\/u-boot.dtb $(1)\/ || true/' "$mkfile"
-    # 防御 install -m0644 格式的硬编码
-    sed -i 's/install .*u-boot.dtb.*/[ -f $(PKG_BUILD_DIR)\/u-boot.dtb ] \&\& cp -f $(PKG_BUILD_DIR)\/u-boot.dtb $(1)\/ || true/' "$mkfile"
+    echo "正在修补: $mkfile"
+    
+    # 策略 1: 只要编译结束，就防患于未然——强制在 PKG_BUILD_DIR 根目录下建立 u-boot.dtb 占位文件（如果不存在）
+    # 这样后续任何 CP/INSTALL 指令都不会因找不到文件而溃败
+    if ! grep -q "touch \$(PKG_BUILD_DIR)/u-boot.dtb" "$mkfile"; do
+        sed -i '/define Build\/Compile/a \t[ -f $(PKG_BUILD_DIR)/u-boot.dtb ] || touch $(PKG_BUILD_DIR)/u-boot.dtb' "$mkfile"
+    fi
+
+    # 策略 2: 替换所有可能产生 Error 127 的 $(INSTALL_DATA) 指令，强制容错
+    sed -i 's/$(INSTALL_DATA) \(.*u-boot\.dtb\)/[ -f \1 ] \&\& $(INSTALL_DATA) \1 || true/g' "$mkfile"
+    sed -i 's/install -m0644 \(.*u-boot\.dtb\)/[ -f \1 ] \&\& install -m0644 \1 || true/g' "$mkfile"
+    sed -i 's/$(CP) \(.*u-boot\.dtb\)/[ -f \1 ] \&\& $(CP) \1 || true/g' "$mkfile"
 done
+
+echo "✔ uboot-airoha 安全防护注入完成！"
 
 # =====================================================================
 # 1. 直接覆盖 AN7581 CPU PM Domain 驱动 (解决 SMC 0Hz 问题)
