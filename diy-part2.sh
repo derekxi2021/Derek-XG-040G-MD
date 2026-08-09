@@ -11,124 +11,160 @@ echo ">>> diy-part2.sh 开始"
 echo "==> 开始执行 diy-part2.sh CPU和EN8811H修补流程..."
 
 # =====================================================================
-# 1. 注入 AN7581 CPUFreq 核心修复补丁 (解决 SMC 返回 0Hz 导致 cpufreq-dt 崩溃问题)
+# 1. 直接覆盖 AN7581 CPU PM Domain 驱动 (彻底避开 patch 工具，修复 SMC 0Hz 问题)
 # =====================================================================
-TARGET_PATCH_DIR="target/linux/airoha/patches-6.18"
-mkdir -p "$TARGET_PATCH_DIR"
+echo "==> 正在使用 files 目录直接写入修复版的 airoha-cpu-pmdomain.c..."
 
-echo "==> 正在写入 CPU 调频 PLL Fallback 补丁..."
-cat << 'EOF' > "$TARGET_PATCH_DIR/805-pmdomain-airoha-add-pll-register-fallback-for-cpu-clk.patch"
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: OpenWrt Builder
-Date: Tue, 5 Aug 2026 21:10:00 +0000
-Subject: [PATCH] pmdomain: airoha: add PLL register fallback for CPU clock rate
+# 1. 清理历史上残留的 805 补丁，防止内核 patch 步骤再次被触发
+rm -f target/linux/airoha/patches-6.18/*pmdomain*.patch 2>/dev/null || true
 
-The CPU clock rate is obtained via an SMC call to BL31 (ARM Trusted
-Firmware). When using the original manufacturer BL31 instead of the
-OpenWrt custom BL31, this SMC call may return 0, causing cpufreq
-initialization to fail with:
-  cpufreq: cpufreq_policy_online: ->get() failed
-  cpufreq-dt: failed register driver: -19
+# 2. 写入覆盖文件到 OpenWrt 的 target files 目录
+TARGET_C_DIR="target/linux/airoha/files/drivers/pmdomain/mediatek"
+mkdir -p "$TARGET_C_DIR"
 
-Add a fallback that reads the CPU PLL registers directly when the SMC
-call returns 0.
----
- drivers/pmdomain/mediatek/airoha-cpu-pmdomain.c | 68 ++++++++++++++++++++++---
- 1 file changed, 62 insertions(+), 6 deletions(-)
+cat << 'EOF' > "$TARGET_C_DIR/airoha-cpu-pmdomain.c"
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Airoha AN7581 CPU PM domain and clock driver
+ * Direct-override version with PLL fallback
+ */
 
---- a/drivers/pmdomain/mediatek/airoha-cpu-pmdomain.c
-+++ b/drivers/pmdomain/mediatek/airoha-cpu-pmdomain.c
-@@ -3,6 +3,7 @@
- #include <linux/arm-smccc.h>
- #include <linux/bitfield.h>
- #include <linux/clk-provider.h>
-+#include <linux/io.h>
- #include <linux/module.h>
- #include <linux/platform_device.h>
- #include <linux/pm_domain.h>
-@@ -11,6 +12,14 @@
- #define AIROHA_SIP_AVS_HANDLE 0x82000301
- #define AIROHA_AVS_OP_BASE 0xddddddd0
- #define AIROHA_AVS_OP_MASK GENMASK(1, 0)
-+
-+/* CPU PLL registers for fallback when SMC is unavailable */
-+#define AIROHA_CPU_PLL_BASE 0x1fa20000
-+#define AIROHA_CPU_PLL_PCW_OFFSET 0x2b4
-+#define AIROHA_CPU_PLL_CHG_OFFSET 0x2b8
-+#define AIROHA_CPU_PLL_PCW_INT_MASK GENMASK(30, 24)
-+#define AIROHA_CPU_PLL_POSDIV_MASK GENMASK(6, 4)
-+
- #define AIROHA_AVS_OP_FREQ_DYN_ADJ (AIROHA_AVS_OP_BASE | \
-  FIELD_PREP(AIROHA_AVS_OP_MASK, 0x1))
- #define AIROHA_AVS_OP_GET_FREQ (AIROHA_AVS_OP_BASE | \
-@@ -19,6 +28,8 @@
- struct airoha_cpu_pmdomain_priv {
-  struct clk_hw hw;
-  struct generic_pm_domain pd;
-+ void __iomem *pll_pcw;
-+ void __iomem *pll_chg;
- };
+#include <linux/arm-smccc.h>
+#include <linux/bitfield.h>
+#include <linux/clk-provider.h>
+#include <linux/io.h>
+#include <linux/module.h>
+#include <linux/platform_device.h>
+#include <linux/pm_domain.h>
 
- static int airoha_cpu_pmdomain_clk_determine_rate(struct clk_hw *hw,
-@@ -30,13 +41,35 @@
- static unsigned long airoha_cpu_pmdomain_clk_get(struct clk_hw *hw,
-  unsigned long parent_rate)
- {
-+ struct airoha_cpu_pmdomain_priv *priv =
-+ container_of(hw, struct airoha_cpu_pmdomain_priv, hw);
-  struct arm_smccc_res res;
-+ unsigned long freq;
+#define AIROHA_SIP_AVS_HANDLE 0x82000301
+#define AIROHA_AVS_OP_BASE 0xddddddd0
+#define AIROHA_AVS_OP_MASK GENMASK(1, 0)
 
-  arm_smccc_1_1_invoke(AIROHA_SIP_AVS_HANDLE, AIROHA_AVS_OP_GET_FREQ,
-        0, 0, 0, 0, 0, 0, &res);
+/* CPU PLL registers for fallback when SMC is unavailable */
+#define AIROHA_CPU_PLL_BASE 0x1fa20000
+#define AIROHA_CPU_PLL_PCW_OFFSET 0x2b4
+#define AIROHA_CPU_PLL_CHG_OFFSET 0x2b8
+#define AIROHA_CPU_PLL_PCW_INT_MASK GENMASK(30, 24)
+#define AIROHA_CPU_PLL_POSDIV_MASK GENMASK(6, 4)
 
-  /* SMCCC returns freq in MHz */
-- return (int)(res.a0 * 1000 * 1000);
-+ freq = (unsigned long)(res.a0 * 1000 * 1000);
-+
-+ /* Fallback to PLL register read when SMC returns 0
-+ * (e.g. original manufacturer BL31 doesn't support this SMC call)
-+ */
-+ if (freq == 0 && priv->pll_pcw && priv->pll_chg) {
-+ u32 pcw_val = readl(priv->pll_pcw);
-+ u32 chg_val = readl(priv->pll_chg);
-+ u32 pcw_int = FIELD_GET(AIROHA_CPU_PLL_PCW_INT_MASK, pcw_val);
-+ u32 posdiv = FIELD_GET(AIROHA_CPU_PLL_POSDIV_MASK, chg_val);
-+
-+ if (pcw_int > 0) {
-+ if (posdiv == 0)
-+ freq = pcw_int * 50 * 1000 * 1000;
-+ else
-+ freq = (pcw_int * 50 * 1000 * 1000) >> posdiv;
-+ }
-+ }
-+
-+ return freq;
- }
+#define AIROHA_AVS_OP_FREQ_DYN_ADJ (AIROHA_AVS_OP_BASE | \
+				    FIELD_PREP(AIROHA_AVS_OP_MASK, 0x1))
+#define AIROHA_AVS_OP_GET_FREQ (AIROHA_AVS_OP_BASE | \
+				FIELD_PREP(AIROHA_AVS_OP_MASK, 0x2))
 
- /* Airoha CPU clk SMCC is always enabled */
-@@ -80,6 +113,19 @@
-  if (!priv)
-  return -ENOMEM;
+struct airoha_cpu_pmdomain_priv {
+	struct clk_hw hw;
+	struct generic_pm_domain pd;
+	void __iomem *pll_pcw;
+	void __iomem *pll_chg;
+};
 
-+ /* Map CPU PLL registers for fallback clock rate reading */
-+ priv->pll_pcw = devm_ioremap(dev,
-+      AIROHA_CPU_PLL_BASE + AIROHA_CPU_PLL_PCW_OFFSET,
-+      0x4);
-+ priv->pll_chg = devm_ioremap(dev,
-+      AIROHA_CPU_PLL_BASE + AIROHA_CPU_PLL_CHG_OFFSET,
-+      0x4);
-+ if (!priv->pll_pcw || !priv->pll_chg) {
-+ dev_warn(dev, "failed to map CPU PLL registers, SMC fallback disabled\n");
-+ priv->pll_pcw = NULL;
-+ priv->pll_chg = NULL;
-+ }
-+
-  /* Init and register a get-only clk for Cpufreq */
-  priv->hw.init = &init;
-  ret = devm_clk_hw_register(dev, &priv->hw);
+static unsigned long airoha_cpu_pmdomain_clk_get(struct clk_hw *hw,
+						 unsigned long parent_rate)
+{
+	struct airoha_cpu_pmdomain_priv *priv =
+		container_of(hw, struct airoha_cpu_pmdomain_priv, hw);
+	struct arm_smccc_res res;
+	unsigned long freq;
+
+	arm_smccc_1_1_invoke(AIROHA_SIP_AVS_HANDLE, AIROHA_AVS_OP_GET_FREQ,
+			     0, 0, 0, 0, 0, 0, &res);
+
+	/* SMCCC returns freq in MHz */
+	freq = (unsigned long)(res.a0 * 1000 * 1000);
+
+	/* Fallback to PLL register read when SMC returns 0 */
+	if (freq == 0 && priv->pll_pcw && priv->pll_chg) {
+		u32 pcw_val = readl(priv->pll_pcw);
+		u32 chg_val = readl(priv->pll_chg);
+		u32 pcw_int = FIELD_GET(AIROHA_CPU_PLL_PCW_INT_MASK, pcw_val);
+		u32 posdiv = FIELD_GET(AIROHA_CPU_PLL_POSDIV_MASK, chg_val);
+
+		if (pcw_int > 0) {
+			if (posdiv == 0)
+				freq = pcw_int * 50 * 1000 * 1000;
+			else
+				freq = (pcw_int * 50 * 1000 * 1000) >> posdiv;
+		}
+	}
+
+	return freq;
+}
+
+static int airoha_cpu_pmdomain_clk_determine_rate(struct clk_hw *hw,
+						   struct clk_rate_request *req)
+{
+	req->rate = airoha_cpu_pmdomain_clk_get(hw, 0);
+	return 0;
+}
+
+static const struct clk_ops airoha_cpu_pmdomain_clk_ops = {
+	.get_rate = airoha_cpu_pmdomain_clk_get,
+	.determine_rate = airoha_cpu_pmdomain_clk_determine_rate,
+};
+
+static int airoha_cpu_pmdomain_probe(struct platform_device *pdev)
+{
+	struct clk_init_data init = {
+		.name = "airoha_cpu_clk",
+		.ops = &airoha_cpu_pmdomain_clk_ops,
+	};
+	struct airoha_cpu_pmdomain_priv *priv;
+	struct device *dev = &pdev->dev;
+	int ret;
+
+	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	/* Map CPU PLL registers for fallback clock rate reading */
+	priv->pll_pcw = devm_ioremap(dev,
+				     AIROHA_CPU_PLL_BASE + AIROHA_CPU_PLL_PCW_OFFSET,
+				     0x4);
+	priv->pll_chg = devm_ioremap(dev,
+				     AIROHA_CPU_PLL_BASE + AIROHA_CPU_PLL_CHG_OFFSET,
+				     0x4);
+	if (!priv->pll_pcw || !priv->pll_chg) {
+		dev_warn(dev, "failed to map CPU PLL registers, SMC fallback disabled\n");
+		priv->pll_pcw = NULL;
+		priv->pll_chg = NULL;
+	}
+
+	priv->hw.init = &init;
+	ret = devm_clk_hw_register(dev, &priv->hw);
+	if (ret)
+		return ret;
+
+	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_simple_get, &priv->hw);
+	if (ret)
+		return ret;
+
+	priv->pd.name = dev_name(dev);
+	return pm_genpd_init(&priv->pd, NULL, false);
+}
+
+static const struct of_device_id airoha_cpu_pmdomain_match[] = {
+	{ .compatible = "airoha,an7581-cpu-pmdomain" },
+	{ /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(of, airoha_cpu_pmdomain_match);
+
+static struct platform_driver airoha_cpu_pmdomain_driver = {
+	.probe = airoha_cpu_pmdomain_probe,
+	.driver = {
+		.name = "airoha-cpu-pmdomain",
+		.of_match_table = airoha_cpu_pmdomain_match,
+	},
+};
+module_platform_driver(airoha_cpu_pmdomain_driver);
+
+MODULE_AUTHOR("OpenWrt Builder");
+MODULE_DESCRIPTION("Airoha AN7581 CPU PM domain and clock driver");
+MODULE_LICENSE("GPL");
 EOF
-echo "✔ CPU 调频修复补丁注入完毕！"
+
+echo "✔ CPU PM Domain 驱动文件已通过 files 机制注入！"
 
 # ============================================================
 # 2. luci-app-airoha-npu（手动放入 + 修复路径）
@@ -296,11 +332,13 @@ chmod +x target/linux/airoha/an7581/base-files/etc/uci-defaults/99-fix-wan-mac
 # 10. 最终检查
 # ============================================================
 echo ">>> 最终检查："
-echo "--- 检查 CPU 调频内核补丁 ---"
-if [ -f "$TARGET_PATCH_DIR/805-pmdomain-airoha-add-pll-register-fallback-for-cpu-clk.patch" ]; then
-    echo "✔ 805-pmdomain 补丁就绪！"
+echo "--- 检查 CPU 调频覆盖源码 ---"
+if [ -f "target/linux/airoha/files/drivers/pmdomain/mediatek/airoha-cpu-pmdomain.c" ]; then
+    echo "✔ CPU PM Domain 覆盖驱动就绪！"
 else
-    echo "❌ 警告：805-pmdomain 补丁丢失！"
+    echo "❌ 警告：CPU PM Domain 覆盖驱动丢失！"
 fi
+
+echo ">>> diy-part2.sh 执行完毕！"
 
 echo ">>> diy-part2.sh 执行完毕！"
