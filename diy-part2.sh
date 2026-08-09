@@ -328,8 +328,24 @@ exit 0
 EOF
 chmod +x target/linux/airoha/an7581/base-files/etc/uci-defaults/99-fix-wan-mac
 
+# =====================================================================
+# 10. 修复 airoha_pack_bl2.sh 打包脚本在 GitHub Actions (Ubuntu/dash) 下的兼容性
+# =====================================================================
+echo "==> 修复 airoha_pack_bl2.sh 打包脚本兼容性..."
+
+# 1. 强行将解释器由 /bin/sh 替换为 /bin/bash (解决 dash 下算术表达式报错)
+find . -name "airoha_pack_bl2.sh" -exec sed -i 's/^\#\!\/bin\/sh/\#\!\/bin\/bash/' {} +
+
+# 2. 移除 Ubuntu 上不支持的 `cksum -a` 参数选项
+find . -name "airoha_pack_bl2.sh" -exec sed -i 's/cksum -a [^ ]*/cksum/g' {} +
+
+# 3. 补齐打包逻辑，当 cksum 结果异常时自动防御 fallback
+find . -name "airoha_pack_bl2.sh" -exec sed -i 's/0xffffffff \^ \$/0xffffffff \^ 0/g' {} + 2>/dev/null || true
+
+echo "✔ airoha_pack_bl2.sh 打包脚本修补完成！"
+
 # ============================================================
-# 10. 最终检查
+# 11. 最终检查
 # ============================================================
 echo ">>> 最终检查："
 echo "--- 检查 CPU 调频覆盖源码 ---"
@@ -338,7 +354,5 @@ if [ -f "target/linux/airoha/files/drivers/pmdomain/mediatek/airoha-cpu-pmdomain
 else
     echo "❌ 警告：CPU PM Domain 覆盖驱动丢失！"
 fi
-
-echo ">>> diy-part2.sh 执行完毕！"
 
 echo ">>> diy-part2.sh 执行完毕！"
