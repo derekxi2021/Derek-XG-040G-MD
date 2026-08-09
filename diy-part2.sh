@@ -8,17 +8,27 @@
 set -e
 
 echo ">>> diy-part2.sh 开始"
-echo "==> 开始执行 diy-part2.sh CPU和EN8811H修补流程..."
+echo "==> 开始执行 diy-part2.sh 修补流程..."
 
 # =====================================================================
-# 1. 直接覆盖 AN7581 CPU PM Domain 驱动 (彻底避开 patch 工具，修复 SMC 0Hz 问题)
+# 0. 关键修复：修改 uboot-airoha 的 Makefile，允许 DTB 缺失容错/自动寻找
 # =====================================================================
-echo "==> 正在使用 files 目录直接写入修复版的 airoha-cpu-pmdomain.c..."
+echo "==> 正在修补 package/boot/uboot-airoha 避免 u-boot.dtb 报错..."
 
-# 1. 清理历史上残留的 805 补丁，防止内核 patch 步骤再次被触发
+find package/ -type f -path "*/uboot-airoha/Makefile" | while read -r mkfile; do
+    echo "发现 uboot-airoha Makefile: $mkfile"
+    # 将复制 u-boot.dtb 的强依赖改为【存在才复制】的安全模式
+    sed -i 's/$(INSTALL_DATA) $(PKG_BUILD_DIR)\/u-boot.dtb.*/[ -f $(PKG_BUILD_DIR)\/u-boot.dtb ] \&\& $(INSTALL_DATA) $(PKG_BUILD_DIR)\/u-boot.dtb $(1)\/ || true/' "$mkfile"
+    # 防御 install -m0644 格式的硬编码
+    sed -i 's/install .*u-boot.dtb.*/[ -f $(PKG_BUILD_DIR)\/u-boot.dtb ] \&\& cp -f $(PKG_BUILD_DIR)\/u-boot.dtb $(1)\/ || true/' "$mkfile"
+done
+
+# =====================================================================
+# 1. 直接覆盖 AN7581 CPU PM Domain 驱动 (解决 SMC 0Hz 问题)
+# =====================================================================
+echo "==> 正在注入修复版 airoha-cpu-pmdomain.c..."
 rm -f target/linux/airoha/patches-6.18/*pmdomain*.patch 2>/dev/null || true
 
-# 2. 写入覆盖文件到 OpenWrt 的 target files 目录
 TARGET_C_DIR="target/linux/airoha/files/drivers/pmdomain/mediatek"
 mkdir -p "$TARGET_C_DIR"
 
@@ -164,125 +174,44 @@ MODULE_DESCRIPTION("Airoha AN7581 CPU PM domain and clock driver");
 MODULE_LICENSE("GPL");
 EOF
 
-echo "✔ CPU PM Domain 驱动文件已通过 files 机制注入！"
-
 # ============================================================
-# 2. luci-app-airoha-npu（手动放入 + 修复路径）
+# 2. luci-app-airoha-npu
 # ============================================================
 rm -rf package/luci-app-airoha-npu
 git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
 sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' package/luci-app-airoha-npu/Makefile
-echo "✔ luci-app-airoha-npu 已放入并修复 Makefile"
 
 # ============================================================
-# 3. vlmcsd + luci-app-vlmcsd（使用 ImmortalWrt 源）
+# 3. vlmcsd + luci-app-vlmcsd
 # ============================================================
 rm -rf package/vlmcsd package/luci-app-vlmcsd /tmp/immortal-tmp
 mkdir -p /tmp/immortal-tmp
-
 git clone --depth=1 https://github.com/immortalwrt/packages.git /tmp/immortal-tmp/packages
 git clone --depth=1 https://github.com/immortalwrt/luci.git /tmp/immortal-tmp/luci
-
 cp -a /tmp/immortal-tmp/packages/net/vlmcsd package/vlmcsd
 cp -a /tmp/immortal-tmp/luci/applications/luci-app-vlmcsd package/luci-app-vlmcsd
-
 if [ -f package/luci-app-vlmcsd/Makefile ]; then
   sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' package/luci-app-vlmcsd/Makefile 2>/dev/null || true
 fi
-
 rm -rf /tmp/immortal-tmp
-echo "✔ ImmortalWrt 的 vlmcsd + luci-app-vlmcsd 已放入"
 
 # ============================================================
-# 4. 清理会导致 Kconfig 循环依赖的冲突包
+# 4. 清理冲突包
 # ============================================================
-echo "==> 正在清理冲突包以修复 Kconfig 循环依赖报错..."
 find feeds/ -type d -name "luci-app-homeproxy" -exec rm -rf {} + 2>/dev/null || true
 find feeds/ -type d -name "luci-app-fchomo" -exec rm -rf {} + 2>/dev/null || true
 find feeds/ -type d -name "luci-app-momo" -exec rm -rf {} + 2>/dev/null || true
 find feeds/ -type d -name "momo" -exec rm -rf {} + 2>/dev/null || true
 find package/ -type d -name "luci-app-homeproxy" -exec rm -rf {} + 2>/dev/null || true
 rm -rf feeds/helloworld/dae feeds/helloworld/daed
-echo "✔ 冲突包清理完毕！"
 
 # ============================================================
-# 5. 第一次 defconfig
+# 5. 安全修补内核 config
 # ============================================================
-make defconfig
-
-# 安全净化设备标记
-sed -i 's/CONFIG_TARGET_airoha_an7581_DEVICE_bell_xg-040g-md/CONFIG_TARGET_airoha_an7581_DEVICE_nokia_xg-040g-md/g' .config 2>/dev/null || true
-
-# ============================================================
-# 6. 强制写入需要的包选项
-# ============================================================
-cat << 'EOF' >> .config
-# NPU & 核心 App
-CONFIG_PACKAGE_airoha-en7581-npu-firmware=y
-CONFIG_PACKAGE_luci-app-airoha-npu=y
-CONFIG_PACKAGE_luci-i18n-airoha-npu-zh-cn=y
-CONFIG_PACKAGE_vlmcsd=y
-CONFIG_PACKAGE_luci-app-vlmcsd=y
-CONFIG_PACKAGE_luci-i18n-vlmcsd-zh-cn=y
-CONFIG_PACKAGE_luci-theme-argon=y
-CONFIG_PACKAGE_luci-app-passwall2=y
-CONFIG_PACKAGE_sing-box=y
-
-# EN8811H PHY 驱动与 MD32 固件
-CONFIG_PACKAGE_kmod-phy-airoha=y
-CONFIG_PACKAGE_airoha-en8811h-firmware=y
-CONFIG_PACKAGE_ethtool=y
-
-# Devmem & Debug 支持
-CONFIG_KERNEL_DEVMEM=y
-CONFIG_BUSYBOX_CUSTOM=y
-CONFIG_BUSYBOX_CONFIG_DEVMEM=y
-CONFIG_KERNEL_DEBUG_FS=y
-
-# CPU 调频用户态与驱动模块
-CONFIG_PACKAGE_kmod-cpufreq-dt=y
-CONFIG_PACKAGE_kmod-cpufreq-governor-schedutil=y
-CONFIG_PACKAGE_kmod-cpufreq-governor-performance=y
-CONFIG_PACKAGE_kmod-cpufreq-governor-ondemand=y
-CONFIG_PACKAGE_kmod-cpufreq-governor-conservative=y
-EOF
-
-make defconfig
-
-# ============================================================
-# 7. 再次强保关键包
-# ============================================================
-for pkg in \
-  airoha-en7581-npu-firmware \
-  airoha-en8811h-firmware \
-  kmod-phy-airoha \
-  ethtool \
-  luci-app-airoha-npu \
-  luci-i18n-airoha-npu-zh-cn \
-  vlmcsd \
-  luci-app-vlmcsd \
-  luci-i18n-vlmcsd-zh-cn \
-  kmod-cpufreq-dt \
-  kmod-cpufreq-governor-schedutil \
-  kmod-cpufreq-governor-performance \
-  kmod-cpufreq-governor-ondemand \
-  kmod-cpufreq-governor-conservative
-do
-  sed -i "s/# CONFIG_PACKAGE_${pkg} is not set/CONFIG_PACKAGE_${pkg}=y/" .config 2>/dev/null || true
-  grep -q "CONFIG_PACKAGE_${pkg}=y" .config || echo "CONFIG_PACKAGE_${pkg}=y" >> .config
-done
-
-# =====================================================================
-# 8. 安全地在内核 config-* 中补充 CPUFreq 标志位 (添加安全换行，防语法破坏)
-# =====================================================================
-echo "==> 安全修补内核配置文件..."
-
 find target/linux/airoha/ -name "config-*" -exec sed -i 's/CONFIG_STRICT_DEVMEM=y/# CONFIG_STRICT_DEVMEM is not set/g' {} +
 find target/linux/airoha/ -name "config-*" -exec sed -i 's/CONFIG_IO_STRICT_DEVMEM=y/# CONFIG_IO_STRICT_DEVMEM is not set/g' {} +
 
 for cfg in $(find target/linux/airoha/ -name "config-*"); do
-    echo "修补内核配置文件: $cfg"
-    # 确保文件末尾有独立换行，防止字符串拼接错误
     echo "" >> "$cfg"
     cat << 'EOF' >> "$cfg"
 CONFIG_CPU_FREQ=y
@@ -303,10 +232,9 @@ CONFIG_ENERGY_MODEL=y
 EOF
 done
 
-# =====================================================================
-# 9. 自动修复 WAN MAC 地址 (来自 Commit 4e950b6 方案)
-# =====================================================================
-echo "==> 写入 WAN MAC 修复脚本 (99-fix-wan-mac)..."
+# ============================================================
+# 6. WAN MAC 地址自动修复
+# ============================================================
 mkdir -p target/linux/airoha/an7581/base-files/etc/uci-defaults/
 cat << 'EOF' > target/linux/airoha/an7581/base-files/etc/uci-defaults/99-fix-wan-mac
 #!/bin/sh
@@ -328,31 +256,10 @@ exit 0
 EOF
 chmod +x target/linux/airoha/an7581/base-files/etc/uci-defaults/99-fix-wan-mac
 
-# =====================================================================
-# 10. 修复 airoha_pack_bl2.sh 打包脚本在 GitHub Actions (Ubuntu/dash) 下的兼容性
-# =====================================================================
-echo "==> 修复 airoha_pack_bl2.sh 打包脚本兼容性..."
-
-# 1. 强行将解释器由 /bin/sh 替换为 /bin/bash (解决 dash 下算术表达式报错)
+# ============================================================
+# 7. 打包脚本 shell 兼容性修复
+# ============================================================
 find . -name "airoha_pack_bl2.sh" -exec sed -i 's/^\#\!\/bin\/sh/\#\!\/bin\/bash/' {} +
-
-# 2. 移除 Ubuntu 上不支持的 `cksum -a` 参数选项
 find . -name "airoha_pack_bl2.sh" -exec sed -i 's/cksum -a [^ ]*/cksum/g' {} +
-
-# 3. 补齐打包逻辑，当 cksum 结果异常时自动防御 fallback
-find . -name "airoha_pack_bl2.sh" -exec sed -i 's/0xffffffff \^ \$/0xffffffff \^ 0/g' {} + 2>/dev/null || true
-
-echo "✔ airoha_pack_bl2.sh 打包脚本修补完成！"
-
-# ============================================================
-# 11. 最终检查
-# ============================================================
-echo ">>> 最终检查："
-echo "--- 检查 CPU 调频覆盖源码 ---"
-if [ -f "target/linux/airoha/files/drivers/pmdomain/mediatek/airoha-cpu-pmdomain.c" ]; then
-    echo "✔ CPU PM Domain 覆盖驱动就绪！"
-else
-    echo "❌ 警告：CPU PM Domain 覆盖驱动丢失！"
-fi
 
 echo ">>> diy-part2.sh 执行完毕！"
