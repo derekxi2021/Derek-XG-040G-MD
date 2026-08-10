@@ -203,7 +203,8 @@ rm -rf /tmp/immortal-tmp
 # 5. 清理第三方 Feed 构建冲突与冗余依赖
 # ------------------------------------------------------------
 echo ">>> [5/5] 正在清理编译冲突包..."
-rm -rf feeds/helloworld/dae feeds/helloworld/daed feeds/helloworld/tcping
+rm -rf feeds/helloworld/dae feeds/helloworld/daed
+# 不要删 tcping！luci-app-passwall2 硬依赖它
 
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
