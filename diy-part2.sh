@@ -200,8 +200,18 @@ fi
 rm -rf /tmp/immortal-tmp
 
 # ------------------------------------------------------------
-# 5. 清理第三方 Feed 构建冲突与冗余依赖
+# 5. 整理第三方 Feed 构建冲突与冗余依赖
 # ------------------------------------------------------------
+# 彻底清除 feeds 里的 tcping 重复/旧版本
+rm -rf feeds/helloworld/tcping
+rm -rf feeds/kenzo/tcping
+rm -rf package/feeds/helloworld/tcping
+rm -rf package/feeds/kenzo/tcping
+
+# 从单独维护的仓库拉取兼容 GCC 14/Musl 的最新 tcping 到 package 目录 (优先级最高)
+git clone https://github.com/kenzok8/tcping package/tcping
+
+# 清理第三方 Feed 构建冲突与冗余依赖
 echo ">>> [5/5] 正在清理编译冲突包..."
 rm -rf feeds/helloworld/dae feeds/helloworld/daed
 # 不要删 tcping！luci-app-passwall2 硬依赖它
