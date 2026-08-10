@@ -215,6 +215,13 @@ git clone https://github.com/kenzok8/tcping package/tcping
 # 3. 强制把 tcping 写入 .config 确保它被编译（非常重要！）
 echo "CONFIG_PACKAGE_tcping=y" >> .config
 
+# 4. 关键：删除 tmp 索引缓存，强制 OpenWrt 重新扫描 package/ 目录
+rm -rf tmp/.packageinfo tmp/.targetinfo
+
+# 5. 重新刷新 install 关系并重新计算依赖
+./scripts/feeds install -a
+make defconfig
+
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
 echo "========================================="
