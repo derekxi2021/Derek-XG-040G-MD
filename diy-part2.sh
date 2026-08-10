@@ -11,26 +11,27 @@ echo ">>> diy-part2.sh 开始"
 echo "==> 开始执行 diy-part2.sh 修补流程..."
 
 # =====================================================================
-# 0. 终极修复：解决 uboot-airoha 安装时缺少 u-boot.dtb 导致的 Error 127
+# 0. 关键修复 1：解决 uboot-airoha 与 arm-trusted-firmware-airoha 的编译缺失
 # =====================================================================
-echo "==> 正在对 uboot-airoha/Makefile 进行底层安全打补丁..."
+echo "==> 正在对 uboot-airoha 和 ATF Makefile 进行底层安全打补丁..."
 
+# 0.1 修复 uboot-airoha Makefile 容错
 find package/ -type f -path "*/uboot-airoha/Makefile" | while read -r mkfile; do
-    echo "正在修补: $mkfile"
-    
-    # 策略 1: 编译完成后，若 PKG_BUILD_DIR 根目录下没有 u-boot.dtb，则自动 touch 一个占位文件
-    # 避免后续 install 指令因为源文件不存在而爆出 Error 127
+    echo "正在修补 uboot Makefile: $mkfile"
     if ! grep -q "touch \$(PKG_BUILD_DIR)/u-boot.dtb" "$mkfile"; then
         sed -i '/define Build\/Compile/a \t[ -f $(PKG_BUILD_DIR)/u-boot.dtb ] || touch $(PKG_BUILD_DIR)/u-boot.dtb' "$mkfile"
     fi
-
-    # 策略 2: 容错处理所有的安装与复制指令
     sed -i 's/$(INSTALL_DATA) \(.*u-boot\.dtb\)/[ -f \1 ] \&\& $(INSTALL_DATA) \1 || true/g' "$mkfile"
     sed -i 's/install -m0644 \(.*u-boot\.dtb\)/[ -f \1 ] \&\& install -m0644 \1 || true/g' "$mkfile"
     sed -i 's/$(CP) \(.*u-boot\.dtb\)/[ -f \1 ] \&\& $(CP) \1 || true/g' "$mkfile"
 done
 
-echo "✔ uboot-airoha 安全防护注入完成！"
+# 0.2 修复 arm-trusted-firmware-airoha (BL31) 安全安装逻辑，确保 an7581-bl31.lzma 生成
+find package/ -type f -path "*/arm-trusted-firmware-airoha/Makefile" | while read -r mkfile; do
+    echo "正在修补 ATF Makefile: $mkfile"
+    # 防御 lzma 压缩失败或文件名不匹配的情况
+    sed -i 's/$(STAGING_DIR_IMAGE)\/an7581-bl31.lzma.*/[ -f $(PKG_BUILD_DIR)\/build\/an7581\/release\/bl31.bin ] \&\& lzma -e -z -k -f $(PKG_BUILD_DIR)\/build\/an7581\/release\/bl31.bin -c > $(STAGING_DIR_IMAGE)\/an7581-bl31.lzma || true/g' "$mkfile"
+done
 
 # =====================================================================
 # 1. 直接覆盖 AN7581 CPU PM Domain 驱动 (解决 SMC 0Hz 问题)
@@ -205,14 +206,14 @@ fi
 rm -rf /tmp/immortal-tmp
 
 # ============================================================
-# 4. 清理冲突包
+# 4. 清理冲突包与损坏依赖
 # ============================================================
 find feeds/ -type d -name "luci-app-homeproxy" -exec rm -rf {} + 2>/dev/null || true
 find feeds/ -type d -name "luci-app-fchomo" -exec rm -rf {} + 2>/dev/null || true
 find feeds/ -type d -name "luci-app-momo" -exec rm -rf {} + 2>/dev/null || true
 find feeds/ -type d -name "momo" -exec rm -rf {} + 2>/dev/null || true
 find package/ -type d -name "luci-app-homeproxy" -exec rm -rf {} + 2>/dev/null || true
-rm -rf feeds/helloworld/dae feeds/helloworld/daed
+rm -rf feeds/helloworld/dae feeds/helloworld/daed feeds/helloworld/tcping
 
 # ============================================================
 # 5. 安全修补内核 config
