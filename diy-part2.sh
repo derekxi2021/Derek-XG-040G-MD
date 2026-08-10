@@ -9,12 +9,14 @@ echo ">>> 开始执行 diy-part2.sh 完整自定义脚本"
 echo "========================================="
 
 # ------------------------------------------------------------
-# 1. 安全注入 CPU 频率驱动 (SMC 0Hz 兜底修复)
-#    注意：不删除任何 patches-6.18 目录下的原厂补丁
+# 1. 注入 CPU 频率驱动并清理冲突的单个内核 Patch
 # ------------------------------------------------------------
 echo ">>> [1/5] 正在配置 CPU 频率与 PM Domain 驱动..."
 TARGET_C_DIR="target/linux/airoha/files/drivers/pmdomain/mediatek"
 mkdir -p "$TARGET_C_DIR"
+
+# 仅移除与我们注入的 C 文件冲突的这单个 patch，绝不影响其他补丁
+rm -f target/linux/airoha/patches-6.18/221-02-pmdomain-airoha-Add-AN7583-cpufreq-compatible.patch
 
 cat << 'EOF' > "$TARGET_C_DIR/airoha-cpu-pmdomain.c"
 // SPDX-License-Identifier: GPL-2.0-only
@@ -115,6 +117,7 @@ static int airoha_cpu_pmdomain_probe(struct platform_device *pdev)
 
 static const struct of_device_id airoha_cpu_pmdomain_match[] = {
 	{ .compatible = "airoha,an7581-cpu-pmdomain" },
+	{ .compatible = "airoha,an7583-cpu-pmdomain" },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, airoha_cpu_pmdomain_match);
