@@ -9,13 +9,13 @@ echo ">>> 开始执行 diy-part2.sh 完整自定义脚本"
 echo "========================================="
 
 # ------------------------------------------------------------
-# 1. 注入 CPU 频率驱动并清理冲突的单个内核 Patch
+# 1. 注入 CPU 频率驱动并清理冲突 Patch (针对 Linux 6.18 深度优化)
 # ------------------------------------------------------------
 echo ">>> [1/5] 正在配置 CPU 频率与 PM Domain 驱动..."
 TARGET_C_DIR="target/linux/airoha/files/drivers/pmdomain/mediatek"
 mkdir -p "$TARGET_C_DIR"
 
-# 仅移除与我们注入的 C 文件冲突的这单个 patch，绝不影响其他补丁
+# 清理与自定义 C 文件冲突的 patch
 rm -f target/linux/airoha/patches-6.18/221-02-pmdomain-airoha-Add-AN7583-cpufreq-compatible.patch
 
 cat << 'EOF' > "$TARGET_C_DIR/airoha-cpu-pmdomain.c"
@@ -74,15 +74,14 @@ static unsigned long airoha_cpu_pmdomain_clk_get(struct clk_hw *hw, unsigned lon
 	return freq;
 }
 
-static int airoha_cpu_pmdomain_clk_determine_rate(struct clk_hw *hw, struct clk_rate_request *req)
+static long airoha_cpu_pmdomain_clk_round_rate(struct clk_hw *hw, unsigned long rate, unsigned long *parent_rate)
 {
-	req->rate = airoha_cpu_pmdomain_clk_get(hw, 0);
-	return 0;
+	return airoha_cpu_pmdomain_clk_get(hw, *parent_rate);
 }
 
 static const struct clk_ops airoha_cpu_pmdomain_clk_ops = {
-	.get_rate = airoha_cpu_pmdomain_clk_get,
-	.determine_rate = airoha_cpu_pmdomain_clk_determine_rate,
+	.recalc_rate = airoha_cpu_pmdomain_clk_get,
+	.round_rate = airoha_cpu_pmdomain_clk_round_rate,
 };
 
 static int airoha_cpu_pmdomain_probe(struct platform_device *pdev)
@@ -141,7 +140,7 @@ if [ -f target/linux/airoha/config-6.18 ]; then
 fi
 
 # ------------------------------------------------------------
-# 2. 注入 WAN MAC 地址 +1 自动计算初始化脚本 (UCI Defaults)
+# 2. 注入 WAN MAC 地址 +1 自动计算初始化脚本 (兼容 BusyBox Shell)
 # ------------------------------------------------------------
 echo ">>> [2/5] 正在配置 WAN MAC 地址 +1 规则..."
 mkdir -p target/linux/airoha/base-files/etc/uci-defaults
@@ -149,21 +148,19 @@ mkdir -p target/linux/airoha/base-files/etc/uci-defaults
 cat << 'EOF' > target/linux/airoha/base-files/etc/uci-defaults/99-fix-wan-mac
 #!/bin/sh
 
-# 获取当前 LAN 口 MAC 地址
 lan_mac=$(uci -q get network.lan.macaddr)
 [ -z "$lan_mac" ] && lan_mac=$(cat /sys/class/net/eth0/address 2>/dev/null)
 
 if [ -n "$lan_mac" ]; then
-    # 将 MAC 地址转换为十六进制数值并进行 +1 运算
     mac_clean=$(echo "$lan_mac" | tr -d ':')
-    mac_dec=$(printf "%d" "0x$mac_clean" 2>/dev/null || awk -v h="$mac_clean" 'BEGIN { print strtonum("0x" h) }')
+    # 使用标准 shell 算术展开，原生兼容所有 BusyBox 环境
+    mac_dec=$((0x$mac_clean))
     
-    if [ -n "$mac_dec" ] && [ "$mac_dec" -gt 0 ]; then
+    if [ "$mac_dec" -gt 0 ] 2>/dev/null; then
         wan_dec=$((mac_dec + 1))
-        # 格式化还原为标准的 XX:XX:XX:XX:XX:XX 格式
+        # 格式化输出为标准的 MAC 格式
         wan_mac=$(printf "%012x" $wan_dec | sed 's/../&:/g;s/:$//')
 
-        # 写入 UCI 网络配置
         uci set network.wan.macaddr="$wan_mac"
         uci set network.wan6.macaddr="$wan_mac" 2>/dev/null || true
         uci commit network
