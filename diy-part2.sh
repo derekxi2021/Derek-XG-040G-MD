@@ -9,14 +9,14 @@ echo ">>> 开始执行 diy-part2.sh 完整自定义脚本"
 echo "========================================="
 
 # ------------------------------------------------------------
-# 1. 注入 CPU 频率驱动并清理冲突 Patch
+# 1. 注入 CPU 频率驱动 (联动 CONFIG_AIROHA_CPU_PM_DOMAIN)
 # ------------------------------------------------------------
 echo ">>> [1/5] 正在配置 CPU 频率与 PM Domain 驱动..."
 TARGET_C_DIR="target/linux/airoha/files/drivers/pmdomain/mediatek"
 mkdir -p "$TARGET_C_DIR"
 
-# 清理与自定义 C 文件冲突的 patch
-rm -f target/linux/airoha/patches-6.18/221-02-pmdomain-airoha-Add-AN7583-cpufreq-compatible.patch
+# 注意：不再删除 221-02-pmdomain-airoha-Add-AN7583-cpufreq-compatible.patch
+# 保证设备树 (DTS) 节点的兼容性
 
 # 写入 C 源码
 cat << 'EOF' > "$TARGET_C_DIR/airoha-cpu-pmdomain.c"
@@ -132,26 +132,24 @@ module_platform_driver(airoha_cpu_pmdomain_driver);
 MODULE_LICENSE("GPL");
 EOF
 
-# 【关键修复】将该文件追加进 drivers/pmdomain/mediatek/Makefile
-MK_FILE="target/linux/airoha/files/drivers/pmdomain/mediatek/Makefile"
+# 修改 Makefile：按 CONFIG_AIROHA_CPU_PM_DOMAIN 进行条件编译
+MK_FILE="$TARGET_C_DIR/Makefile"
 if [ -f "$MK_FILE" ]; then
-    grep -q "airoha-cpu-pmdomain.o" "$MK_FILE" || echo "obj-y += airoha-cpu-pmdomain.o" >> "$MK_FILE"
+    grep -q "airoha-cpu-pmdomain.o" "$MK_FILE" || echo "obj-\$(CONFIG_AIROHA_CPU_PM_DOMAIN) += airoha-cpu-pmdomain.o" >> "$MK_FILE"
 else
-    echo "obj-y += airoha-cpu-pmdomain.o" > "$MK_FILE"
+    echo "obj-\$(CONFIG_AIROHA_CPU_PM_DOMAIN) += airoha-cpu-pmdomain.o" > "$MK_FILE"
 fi
 
-# 确保启用内核配置
-if [ -f target/linux/airoha/config-6.18 ]; then
-    grep -q "CONFIG_PMC_AIROHA_PMDOMAIN" target/linux/airoha/config-6.18 || \
-    echo "CONFIG_PMC_AIROHA_PMDOMAIN=y" >> target/linux/airoha/config-6.18
-fi
+# 同步到 target 内核级 config，防止云编译覆盖 .config
+find target/linux/airoha/ -name "config-*" | while read -r config_file; do
+    grep -q "CONFIG_AIROHA_CPU_PM_DOMAIN" "$config_file" || echo "CONFIG_AIROHA_CPU_PM_DOMAIN=y" >> "$config_file"
+done
 
 # ------------------------------------------------------------
 # 2. 注入 WAN MAC 地址 +1 规则 (通用打包路径 + 稳健的尾字节计算)
 # ------------------------------------------------------------
 echo ">>> [2/5] 正在配置 WAN MAC 地址 +1 规则..."
 
-# 【关键修复】同时向全局 files 目录和 generic 目录写入，确保 100% 打包进固件
 mkdir -p files/etc/uci-defaults
 mkdir -p target/linux/generic/base-files/etc/uci-defaults
 
@@ -159,10 +157,10 @@ cat << 'EOF' > files/etc/uci-defaults/99-fix-wan-mac
 #!/bin/sh
 
 lan_mac=$(uci -q get network.lan.macaddr)
-[ -z "$lan_mac" ] && lan_mac=$(cat /sys/class/net/eth0/address 2>/dev/null || cat /sys/class/net/br-lan/address 2>/dev/null)
+[ -z "$lan_mac" ] && lan_mac=$(cat /sys/class/net/eth0/address 2>/dev/null || cat /sys/class/net/br-lan/address 2>/dev/null || cat /sys/class/net/dsa-mgr/address 2>/dev/null)
 
 if [ -n "$lan_mac" ]; then
-    # 只提取最后一个字节（Hex），避免大数计算导致 BusyBox 溢出
+    # 提取前 5 组和最后 1 组十六进制数，避免大整数做数学运算溢出
     prefix=$(echo "$lan_mac" | awk -F: '{print $1":"$2":"$3":"$4":"$5}')
     last_hex=$(echo "$lan_mac" | awk -F: '{print $6}')
     
@@ -182,7 +180,7 @@ fi
 exit 0
 EOF
 
-# 给两个目录都复制一份，保证最高兼容性
+# 双保险多路径复制并赋予执行权限
 cp files/etc/uci-defaults/99-fix-wan-mac target/linux/generic/base-files/etc/uci-defaults/99-fix-wan-mac 2>/dev/null || true
 
 chmod +x files/etc/uci-defaults/99-fix-wan-mac
