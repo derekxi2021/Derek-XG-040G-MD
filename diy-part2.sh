@@ -200,59 +200,46 @@ fi
 rm -rf /tmp/immortal-tmp
 
 # ------------------------------------------------------------
-# 5. 清理第三方 Feed 构建冲突，并强制替换为可用的 tcping
+# 5. 清理第三方 Feed 构建冲突，彻底修复 tcping 缺失问题（动态生成标准 OpenWrt 包）
 # ------------------------------------------------------------
-# ============================================================
-# [DIY-P2] 彻底修复 tcping 缺失问题（动态生成标准 OpenWrt 包）
-# ============================================================
-echo ">>> [DIY-P2] 正在修复 tcping..."
+echo ">>> [DIY-P2] 正在清理问题插件以修复 Kconfig 递归错误..."
 
-# 1. 清理冲突
-rm -rf feeds/helloworld/dae feeds/helloworld/daed
-rm -rf feeds/helloworld/tcping feeds/kenzo/tcping
-rm -rf package/feeds/helloworld/tcping package/feeds/kenzo/tcping
+# 清理导致 recursive dependency error 的根源插件
+rm -rf feeds/helloworld/luci-app-fchomo package/feeds/helloworld/luci-app-fchomo 2>/dev/null || true
+rm -rf feeds/helloworld/luci-app-homeproxy package/feeds/helloworld/luci-app-homeproxy 2>/dev/null || true
+rm -rf feeds/helloworld/luci-app-momo feeds/helloworld/momo package/feeds/helloworld/luci-app-momo package/feeds/helloworld/momo 2>/dev/null || true
+
+# 清理导致 Warning 的缺失依赖插件
+rm -rf feeds/helloworld/luci-app-daede package/feeds/helloworld/luci-app-daede 2>/dev/null || true
+rm -rf feeds/helloworld/dae feeds/helloworld/daed 2>/dev/null || true
+rm -rf feeds/helloworld/tcping feeds/kenzo/tcping package/feeds/helloworld/tcping package/feeds/kenzo/tcping 2>/dev/null || true
+
+# ============================================================
+# [DIY-P2] 2. 导入 Passwall 官方标准的 tcping 包
+# ============================================================
+echo ">>> [DIY-P2] 正在导入 Passwall 官方 tcping Package..."
 rm -rf package/tcping /tmp/pw-pkgs
 
-# 2. 拉官方包定义
-git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git /tmp/pw-pkgs
+# 拉取 Passwall 官方 packages 仓库并提取 tcping
+git clone --depth=1 https://github.com/openwrt-passwall/openwrt-passwall-packages.git /tmp/pw-pkgs
 cp -a /tmp/pw-pkgs/tcping package/tcping
 rm -rf /tmp/pw-pkgs
 
-# 3. 加固：跳过 mirror hash + 不用上游 -Werror Makefile
-if [ -f package/tcping/Makefile ]; then
-  sed -i 's/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/' package/tcping/Makefile
+# 解除 Passwall / Passwall2 Makefile 对 tcping 的硬绑定
+sed -i 's/+tcping//g' feeds/helloworld/luci-app-passwall2/Makefile 2>/dev/null || true
+sed -i 's/+tcping//g' package/feeds/helloworld/luci-app-passwall2/Makefile 2>/dev/null || true
+sed -i 's/+tcping//g' feeds/helloworld/luci-app-passwall/Makefile 2>/dev/null || true
 
-  # 若还没有 Build/Compile，则追加（避免 -Werror / host strip）
-  if ! grep -q 'define Build/Compile' package/tcping/Makefile; then
-    sed -i '/include $(INCLUDE_DIR)\/package.mk/a\
-\
-define Build/Compile\
-\t$(TARGET_CC) $(TARGET_CFLAGS) -Wall -c $$(PKG_BUILD_DIR)/main.c -o $$(PKG_BUILD_DIR)/main.o\
-\t$(TARGET_CC) $(TARGET_CFLAGS) -Wall -c $$(PKG_BUILD_DIR)/tcp.c -o $$(PKG_BUILD_DIR)/tcp.o\
-\t$(TARGET_CC) $(TARGET_LDFLAGS) $$(PKG_BUILD_DIR)/main.o $$(PKG_BUILD_DIR)/tcp.o -o $$(PKG_BUILD_DIR)/tcping\
-endef
-' package/tcping/Makefile
-  fi
-fi
-
-# 4. 软化硬依赖（双保险，装 rootfs 时不再强制要 tcping）
-find feeds package -type f -name 'Makefile' 2>/dev/null \
-  | xargs grep -l 'tcping' 2>/dev/null \
-  | while read f; do
-      sed -i -E 's/\+tcping[[:space:]]*//g; s/[[:space:]]+tcping([[:space:]]|$)/\1/g' "$f" || true
-    done
-
-# 5. 清索引并选中（可选：软化依赖后即使不编也能过 install）
+# ============================================================
+# [DIY-P2] 3. 刷新 OpenWrt 数据库索引并注入配置
+# ============================================================
+echo ">>> [DIY-P2] 刷新 package 缓存树..."
 rm -rf tmp/.packageinfo tmp/.packageauxvar tmp/.targetinfo
-sed -i '/CONFIG_PACKAGE_tcping/d' .config 2>/dev/null || true
-echo "CONFIG_PACKAGE_tcping=y" >> .config
-make defconfig
-sed -i '/CONFIG_PACKAGE_tcping/d' .config
-echo "CONFIG_PACKAGE_tcping=y" >> .config
-make defconfig
 
-echo ">>> [DIY-P2] tcping 处理完成"
-ls -la package/tcping/Makefile
+# 强制注入 tcping 选中状态
+echo "CONFIG_PACKAGE_tcping=y" >> .config
+
+echo ">>> [DIY-P2] 修复完成！Kconfig 递归依赖与 tcping 问题均已清理。"
 
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
