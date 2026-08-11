@@ -9,138 +9,15 @@ echo ">>> 开始执行 diy-part2.sh 完整自定义脚本"
 echo "========================================="
 
 # ------------------------------------------------------------
-# 1. 注入 CPU 频率驱动 (联动 CONFIG_AIROHA_CPU_PM_DOMAIN)
+# 1. 配置 CPU 频率驱动 (采用源码原生 Patch + 开启内核 Config)
 # ------------------------------------------------------------
 echo ">>> [1/5] 正在配置 CPU 频率与 PM Domain 驱动..."
-TARGET_C_DIR="target/linux/airoha/files/drivers/pmdomain/mediatek"
-mkdir -p "$TARGET_C_DIR"
 
-# 注意：不再删除 221-02-pmdomain-airoha-Add-AN7583-cpufreq-compatible.patch
-# 保证设备树 (DTS) 节点的兼容性
+# 1. 彻底清理之前手动注入的 C 文件和 Makefile，避免冲突导致 Patch 失败
+rm -rf target/linux/airoha/files/drivers/pmdomain/mediatek/airoha-cpu-pmdomain.c
+rm -rf target/linux/airoha/files/drivers/pmdomain/mediatek/Makefile
 
-# 写入 C 源码
-cat << 'EOF' > "$TARGET_C_DIR/airoha-cpu-pmdomain.c"
-// SPDX-License-Identifier: GPL-2.0-only
-#include <linux/arm-smccc.h>
-#include <linux/bitfield.h>
-#include <linux/clk-provider.h>
-#include <linux/io.h>
-#include <linux/module.h>
-#include <linux/platform_device.h>
-#include <linux/pm_domain.h>
-
-#define AIROHA_SIP_AVS_HANDLE 0x82000301
-#define AIROHA_AVS_OP_BASE 0xddddddd0
-#define AIROHA_AVS_OP_MASK GENMASK(1, 0)
-
-#define AIROHA_CPU_PLL_BASE 0x1fa20000
-#define AIROHA_CPU_PLL_PCW_OFFSET 0x2b4
-#define AIROHA_CPU_PLL_CHG_OFFSET 0x2b8
-#define AIROHA_CPU_PLL_PCW_INT_MASK GENMASK(30, 24)
-#define AIROHA_CPU_PLL_POSDIV_MASK GENMASK(6, 4)
-
-#define AIROHA_AVS_OP_GET_FREQ (AIROHA_AVS_OP_BASE | FIELD_PREP(AIROHA_AVS_OP_MASK, 0x2))
-
-struct airoha_cpu_pmdomain_priv {
-	struct clk_hw hw;
-	struct generic_pm_domain pd;
-	void __iomem *pll_pcw;
-	void __iomem *pll_chg;
-};
-
-static unsigned long airoha_cpu_pmdomain_clk_get(struct clk_hw *hw, unsigned long parent_rate)
-{
-	struct airoha_cpu_pmdomain_priv *priv = container_of(hw, struct airoha_cpu_pmdomain_priv, hw);
-	struct arm_smccc_res res;
-	unsigned long freq;
-
-	arm_smccc_1_1_invoke(AIROHA_SIP_AVS_HANDLE, AIROHA_AVS_OP_GET_FREQ, 0, 0, 0, 0, 0, 0, &res);
-	freq = (unsigned long)(res.a0 * 1000 * 1000);
-
-	if (freq == 0 && priv->pll_pcw && priv->pll_chg) {
-		u32 pcw_val = readl(priv->pll_pcw);
-		u32 chg_val = readl(priv->pll_chg);
-		u32 pcw_int = FIELD_GET(AIROHA_CPU_PLL_PCW_INT_MASK, pcw_val);
-		u32 posdiv = FIELD_GET(AIROHA_CPU_PLL_POSDIV_MASK, chg_val);
-
-		if (pcw_int > 0) {
-			if (posdiv == 0)
-				freq = pcw_int * 50 * 1000 * 1000;
-			else
-				freq = (pcw_int * 50 * 1000 * 1000) >> posdiv;
-		}
-	}
-	return freq;
-}
-
-static long airoha_cpu_pmdomain_clk_round_rate(struct clk_hw *hw, unsigned long rate, unsigned long *parent_rate)
-{
-	return airoha_cpu_pmdomain_clk_get(hw, *parent_rate);
-}
-
-static const struct clk_ops airoha_cpu_pmdomain_clk_ops = {
-	.recalc_rate = airoha_cpu_pmdomain_clk_get,
-	.round_rate = airoha_cpu_pmdomain_clk_round_rate,
-};
-
-static int airoha_cpu_pmdomain_probe(struct platform_device *pdev)
-{
-	struct clk_init_data init = {
-		.name = "airoha_cpu_clk",
-		.ops = &airoha_cpu_pmdomain_clk_ops,
-	};
-	struct airoha_cpu_pmdomain_priv *priv;
-	struct device *dev = &pdev->dev;
-	int ret;
-
-	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv)
-		return -ENOMEM;
-
-	priv->pll_pcw = devm_ioremap(dev, AIROHA_CPU_PLL_BASE + AIROHA_CPU_PLL_PCW_OFFSET, 0x4);
-	priv->pll_chg = devm_ioremap(dev, AIROHA_CPU_PLL_BASE + AIROHA_CPU_PLL_CHG_OFFSET, 0x4);
-
-	priv->hw.init = &init;
-	ret = devm_clk_hw_register(dev, &priv->hw);
-	if (ret)
-		return ret;
-
-	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_simple_get, &priv->hw);
-	if (ret)
-		return ret;
-
-	priv->pd.name = dev_name(dev);
-	return pm_genpd_init(&priv->pd, NULL, false);
-}
-
-static const struct of_device_id airoha_cpu_pmdomain_match[] = {
-	{ .compatible = "airoha,an7581-cpu-pmdomain" },
-	{ .compatible = "airoha,an7583-cpu-pmdomain" },
-	{ /* sentinel */ }
-};
-MODULE_DEVICE_TABLE(of, airoha_cpu_pmdomain_match);
-
-static struct platform_driver airoha_cpu_pmdomain_driver = {
-	.probe = airoha_cpu_pmdomain_probe,
-	.driver = {
-		.name = "airoha-cpu-pmdomain",
-		.of_match_table = airoha_cpu_pmdomain_match,
-	},
-};
-module_platform_driver(airoha_cpu_pmdomain_driver);
-
-MODULE_LICENSE("GPL");
-EOF
-
-# 修改 Makefile：按 CONFIG_AIROHA_CPU_PM_DOMAIN 进行条件编译
-MK_FILE="$TARGET_C_DIR/Makefile"
-if [ -f "$MK_FILE" ]; then
-    grep -q "airoha-cpu-pmdomain.o" "$MK_FILE" || echo "obj-\$(CONFIG_AIROHA_CPU_PM_DOMAIN) += airoha-cpu-pmdomain.o" >> "$MK_FILE"
-else
-    echo "obj-\$(CONFIG_AIROHA_CPU_PM_DOMAIN) += airoha-cpu-pmdomain.o" > "$MK_FILE"
-fi
-
-# 同步到 target 内核级 config，防止云编译覆盖 .config
+# 2. 同步开启 target 层级的内核配置宏，让原生 221-02 Patch 的驱动生效
 find target/linux/airoha/ -name "config-*" | while read -r config_file; do
     grep -q "CONFIG_AIROHA_CPU_PM_DOMAIN" "$config_file" || echo "CONFIG_AIROHA_CPU_PM_DOMAIN=y" >> "$config_file"
 done
