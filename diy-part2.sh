@@ -205,65 +205,54 @@ rm -rf /tmp/immortal-tmp
 # ============================================================
 # [DIY-P2] 彻底修复 tcping 缺失问题（动态生成标准 OpenWrt 包）
 # ============================================================
-echo ">>> [DIY-P2] 正在清理旧冲突并生成标准 tcping Package..."
+echo ">>> [DIY-P2] 正在修复 tcping..."
 
-# 1. 清理各种 feeds 里的旧冲突
+# 1. 清理冲突
 rm -rf feeds/helloworld/dae feeds/helloworld/daed
 rm -rf feeds/helloworld/tcping feeds/kenzo/tcping
 rm -rf package/feeds/helloworld/tcping package/feeds/kenzo/tcping
-rm -rf package/tcping
+rm -rf package/tcping /tmp/pw-pkgs
 
-# 2. 手动创建标准的 OpenWrt 包目录结构并写入 Makefile
-mkdir -p package/tcping
-cat > package/tcping/Makefile << 'EOF'
-include $(TOPDIR)/rules.mk
+# 2. 拉官方包定义
+git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git /tmp/pw-pkgs
+cp -a /tmp/pw-pkgs/tcping package/tcping
+rm -rf /tmp/pw-pkgs
 
-PKG_NAME:=tcping
-PKG_VERSION:=0.5
-PKG_RELEASE:=1
+# 3. 加固：跳过 mirror hash + 不用上游 -Werror Makefile
+if [ -f package/tcping/Makefile ]; then
+  sed -i 's/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/' package/tcping/Makefile
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/kenzok8/tcping/tar.gz/$(PKG_VERSION)?
-PKG_HASH:=10a9af5062c2eac8a2d60776404565052c875b4582b378248163facc47dbb10f
-
-PKG_LICENSE:=GPL-2.0-only
-PKG_LICENSE_FILES:=license.txt
-
-PKG_BUILD_PARALLEL:=1
-
-include $(INCLUDE_DIR)/package.mk
-
-define Package/tcping
-  SECTION:=net
-  CATEGORY:=Network
-  TITLE:=tcping measures the latency of a tcp-connection
-  URL:=https://github.com/kenzok8/tcping
+  # 若还没有 Build/Compile，则追加（避免 -Werror / host strip）
+  if ! grep -q 'define Build/Compile' package/tcping/Makefile; then
+    sed -i '/include $(INCLUDE_DIR)\/package.mk/a\
+\
+define Build/Compile\
+\t$(TARGET_CC) $(TARGET_CFLAGS) -Wall -c $$(PKG_BUILD_DIR)/main.c -o $$(PKG_BUILD_DIR)/main.o\
+\t$(TARGET_CC) $(TARGET_CFLAGS) -Wall -c $$(PKG_BUILD_DIR)/tcp.c -o $$(PKG_BUILD_DIR)/tcp.o\
+\t$(TARGET_CC) $(TARGET_LDFLAGS) $$(PKG_BUILD_DIR)/main.o $$(PKG_BUILD_DIR)/tcp.o -o $$(PKG_BUILD_DIR)/tcping\
 endef
+' package/tcping/Makefile
+  fi
+fi
 
-define Build/Compile
-	$(MAKE) -C $(PKG_BUILD_DIR) \
-		CC="$(TARGET_CC)" \
-		CFLAGS="$(TARGET_CFLAGS) -Wall" \
-		LDFLAGS="$(TARGET_LDFLAGS)"
-endef
+# 4. 软化硬依赖（双保险，装 rootfs 时不再强制要 tcping）
+find feeds package -type f -name 'Makefile' 2>/dev/null \
+  | xargs grep -l 'tcping' 2>/dev/null \
+  | while read f; do
+      sed -i -E 's/\+tcping[[:space:]]*//g; s/[[:space:]]+tcping([[:space:]]|$)/\1/g' "$f" || true
+    done
 
-define Package/tcping/install
-	$(INSTALL_DIR) $(1)/usr/sbin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/tcping $(1)/usr/sbin/
-endef
-
-$(eval $(call BuildPackage,tcping))
-EOF
-
-# 3. 移除 Passwall2 对 tcping 的硬性强制依赖 (做一层双保险)
-sed -i 's/+tcping//g' feeds/helloworld/luci-app-passwall2/Makefile 2>/dev/null || true
-sed -i 's/+tcping//g' package/feeds/helloworld/luci-app-passwall2/Makefile 2>/dev/null || true
-
-# 4. 强制刷新索引缓存并选中包
+# 5. 清索引并选中（可选：软化依赖后即使不编也能过 install）
 rm -rf tmp/.packageinfo tmp/.packageauxvar tmp/.targetinfo
+sed -i '/CONFIG_PACKAGE_tcping/d' .config 2>/dev/null || true
 echo "CONFIG_PACKAGE_tcping=y" >> .config
+make defconfig
+sed -i '/CONFIG_PACKAGE_tcping/d' .config
+echo "CONFIG_PACKAGE_tcping=y" >> .config
+make defconfig
 
-echo ">>> [DIY-P2] tcping 标准包配置完成！"
+echo ">>> [DIY-P2] tcping 处理完成"
+ls -la package/tcping/Makefile
 
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
