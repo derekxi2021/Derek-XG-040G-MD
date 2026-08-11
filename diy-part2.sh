@@ -202,25 +202,68 @@ rm -rf /tmp/immortal-tmp
 # ------------------------------------------------------------
 # 5. 清理第三方 Feed 构建冲突，并强制替换为可用的 tcping
 # ------------------------------------------------------------
-echo ">>> [5/5] 正在修复 tcping 依赖与清理冲突包..."
+# ============================================================
+# [DIY-P2] 彻底修复 tcping 缺失问题（动态生成标准 OpenWrt 包）
+# ============================================================
+echo ">>> [DIY-P2] 正在清理旧冲突并生成标准 tcping Package..."
 
-# 1. 清理可能会报冲突的包（注意：不要留在空状态）
+# 1. 清理各种 feeds 里的旧冲突
 rm -rf feeds/helloworld/dae feeds/helloworld/daed
-rm -rf feeds/helloworld/tcping feeds/kenzo/tcping package/feeds/helloworld/tcping package/feeds/kenzo/tcping
-
-# 2. 强制拉取独立维护且兼容 GCC 14/Musl 的 tcping 到 package/ 根目录
+rm -rf feeds/helloworld/tcping feeds/kenzo/tcping
+rm -rf package/feeds/helloworld/tcping package/feeds/kenzo/tcping
 rm -rf package/tcping
-git clone https://github.com/kenzok8/tcping package/tcping
 
-# 3. 强制把 tcping 写入 .config 确保它被编译（非常重要！）
+# 2. 手动创建标准的 OpenWrt 包目录结构并写入 Makefile
+mkdir -p package/tcping
+cat > package/tcping/Makefile << 'EOF'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=tcping
+PKG_VERSION:=0.5
+PKG_RELEASE:=1
+
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE_URL:=https://codeload.github.com/kenzok8/tcping/tar.gz/$(PKG_VERSION)?
+PKG_HASH:=10a9af5062c2eac8a2d60776404565052c875b4582b378248163facc47dbb10f
+
+PKG_LICENSE:=GPL-2.0-only
+PKG_LICENSE_FILES:=license.txt
+
+PKG_BUILD_PARALLEL:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/tcping
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=tcping measures the latency of a tcp-connection
+  URL:=https://github.com/kenzok8/tcping
+endef
+
+define Build/Compile
+	$(MAKE) -C $(PKG_BUILD_DIR) \
+		CC="$(TARGET_CC)" \
+		CFLAGS="$(TARGET_CFLAGS) -Wall" \
+		LDFLAGS="$(TARGET_LDFLAGS)"
+endef
+
+define Package/tcping/install
+	$(INSTALL_DIR) $(1)/usr/sbin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/tcping $(1)/usr/sbin/
+endef
+
+$(eval $(call BuildPackage,tcping))
+EOF
+
+# 3. 移除 Passwall2 对 tcping 的硬性强制依赖 (做一层双保险)
+sed -i 's/+tcping//g' feeds/helloworld/luci-app-passwall2/Makefile 2>/dev/null || true
+sed -i 's/+tcping//g' package/feeds/helloworld/luci-app-passwall2/Makefile 2>/dev/null || true
+
+# 4. 强制刷新索引缓存并选中包
+rm -rf tmp/.packageinfo tmp/.packageauxvar tmp/.targetinfo
 echo "CONFIG_PACKAGE_tcping=y" >> .config
 
-# 4. 关键：删除 tmp 索引缓存，强制 OpenWrt 重新扫描 package/ 目录
-rm -rf tmp/.packageinfo tmp/.targetinfo
-
-# 5. 重新刷新 install 关系并重新计算依赖
-./scripts/feeds install -a
-make defconfig
+echo ">>> [DIY-P2] tcping 标准包配置完成！"
 
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
