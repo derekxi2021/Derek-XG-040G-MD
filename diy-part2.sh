@@ -23,21 +23,31 @@ find target/linux/airoha/ -name "config-*" | while read -r config_file; do
 done
 
 # ------------------------------------------------------------
-# 2. 注入 WAN MAC 地址 +1 规则 (通用打包路径 + 稳健的尾字节计算)
+# 2. 注入 WAN MAC 地址 +1 规则 (适配 lan1 物理接口)
 # ------------------------------------------------------------
 echo ">>> [2/5] 正在配置 WAN MAC 地址 +1 规则..."
 
 mkdir -p files/etc/uci-defaults
-mkdir -p target/linux/generic/base-files/etc/uci-defaults
 
 cat << 'EOF' > files/etc/uci-defaults/99-fix-wan-mac
 #!/bin/sh
 
-lan_mac=$(uci -q get network.lan.macaddr)
-[ -z "$lan_mac" ] && lan_mac=$(cat /sys/class/net/eth0/address 2>/dev/null || cat /sys/class/net/br-lan/address 2>/dev/null || cat /sys/class/net/dsa-mgr/address 2>/dev/null)
+# 1. 优先抓取 lan1 接口的 MAC 地址（UCI 或 sysFS 节点）
+lan_mac=$(uci -q get network.lan1.macaddr)
+[ -z "$lan_mac" ] && lan_mac=$(uci -q get network.lan.macaddr)
 
+# 如果 UCI 里还没记录，依次检测 lan1, eth0, br-lan 等物理网卡
+if [ -z "$lan_mac" ] || [ "$lan_mac" = "00:00:00:00:00:00" ]; then
+    for dev in lan1 eth0 br-lan dsa-mgr eth1; do
+        if [ -f "/sys/class/net/$dev/address" ]; then
+            lan_mac=$(cat "/sys/class/net/$dev/address" 2>/dev/null)
+            [ -n "$lan_mac" ] && [ "$lan_mac" != "00:00:00:00:00:00" ] && break
+        fi
+    done
+fi
+
+# 2. 读取到 lan1 的 MAC 后，末字节进行 +1 计算并写入 WAN/WAN6
 if [ -n "$lan_mac" ]; then
-    # 提取前 5 组和最后 1 组十六进制数，避免大整数做数学运算溢出
     prefix=$(echo "$lan_mac" | awk -F: '{print $1":"$2":"$3":"$4":"$5}')
     last_hex=$(echo "$lan_mac" | awk -F: '{print $6}')
     
@@ -48,6 +58,7 @@ if [ -n "$lan_mac" ]; then
         
         wan_mac="${prefix}:${next_hex}"
 
+        # 写入 WAN 及 WAN6 配置
         uci set network.wan.macaddr="$wan_mac"
         uci set network.wan6.macaddr="$wan_mac" 2>/dev/null || true
         uci commit network
@@ -57,11 +68,7 @@ fi
 exit 0
 EOF
 
-# 双保险多路径复制并赋予执行权限
-cp files/etc/uci-defaults/99-fix-wan-mac target/linux/generic/base-files/etc/uci-defaults/99-fix-wan-mac 2>/dev/null || true
-
 chmod +x files/etc/uci-defaults/99-fix-wan-mac
-chmod +x target/linux/generic/base-files/etc/uci-defaults/99-fix-wan-mac 2>/dev/null || true
 
 # ------------------------------------------------------------
 # 3. 集成 Airoha NPU 控制插件 (luci-app-airoha-npu)
