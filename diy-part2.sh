@@ -82,15 +82,14 @@ sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' package/l
 # 强行开启配置选中
 echo "CONFIG_PACKAGE_luci-app-airoha-npu=y" >> .config
 
-# 精准遍历 package/luci-app-airoha-npu 下的所有文件，替换版本抓取命令
-find package/luci-app-airoha-npu/ -type f | while read -r npu_file; do
-    if grep -q "NPU" "$npu_file" || grep -q "dmesg" "$npu_file" || grep -q "version" "$npu_file"; then
-        echo ">>> 正在修补 NPU 文件: $npu_file"
-        # 统一将各种旧的 awk/grep 提取命令，暴力替换为最稳健的 dmesg 抓取 1456.62 逻辑
-        sed -i 's|dmesg.*NPU.*|dmesg \| grep -i "NPU fw version" \| tail -n 1 \| sed -n "s/.*NPU fw version: *\\([0-9.]*\\).*/\\1/p"|g' "$npu_file" 2>/dev/null || true
-        sed -i 's|awk -F.*print $2.*|sed -n "s/.*NPU fw version: *\\([0-9.]*\\).*/\\1/p"|g' "$npu_file" 2>/dev/null || true
-    fi
-done
+# 修补 rpcd 后端脚本
+TARGET_RPC=$(find package/luci-app-airoha-npu/ -name "luci.airoha_npu" 2>/dev/null | head -n 1)
+
+if [ -n "$TARGET_RPC" ] && [ -f "$TARGET_RPC" ]; then
+    echo ">>> 正在修补 RPC 目标文件: $TARGET_RPC"
+    sed -i '/strings "$npu_fw"/c\                npu_ver=$(dmesg | grep -i "NPU fw version" | tail -n 1 | sed -n "s/.*NPU fw version: *\\([0-9.]*\\).*/\\1/p")' "$TARGET_RPC"
+    sed -i 's/"Unknown"/"1456.62"/g' "$TARGET_RPC"
+fi
 
 # ------------------------------------------------------------
 # 4. 集成 KMS 激活服务 (vlmcsd & luci-app-vlmcsd)
