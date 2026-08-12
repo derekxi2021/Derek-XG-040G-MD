@@ -149,19 +149,6 @@ echo "CONFIG_PACKAGE_tcping=y" >> .config
 
 echo ">>> [DIY-P2] 修复完成！Kconfig 递归依赖与 tcping 问题均已清理。"
 
-# ------------------------------------------------------------
-# [DIY-P2] 向 LuCI 首页概览直接注入 CPU 温度显示
-# ------------------------------------------------------------
-SYS_JS=$(find feeds/ package/ -name "10_system.js" 2>/dev/null | head -n 1)
-
-if [ -n "$SYS_JS" ] && [ -f "$SYS_JS" ]; then
-    if ! grep -q "CPU Temp" "$SYS_JS"; then
-        echo ">>> 正在向 $SYS_JS 注入 CPU 温度显示..."
-        sed -i '/_('"'"'CPU load'"'"')/a \
-\t\t\t_('"'"'CPU Temp'"'"'), systeminfo.cpu_temperature ? systeminfo.cpu_temperature + " °C" : (systeminfo.thermal && systeminfo.thermal[0] ? (systeminfo.thermal[0].temp / 1000).toFixed(1) + " °C" : _('"'"'N/A'"'"')),' "$SYS_JS"
-    fi
-fi
-
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
 echo "========================================="
