@@ -79,7 +79,7 @@ rm -rf package/luci-app-airoha-npu
 git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
 sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' package/luci-app-airoha-npu/Makefile
 
-# 修复 npu_version 提取逻辑，精准抓取版本号 1456.62
+# 修复 npu_version 提取逻辑，精准抓取版本号
 sed -i 's|awk -F": " "{print $2}"|sed -n '\''s/.*NPU fw version: *\\([0-9.]*\\).*/\\1/p'\''|g' package/luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu
 
 # ------------------------------------------------------------
@@ -104,20 +104,17 @@ rm -rf /tmp/immortal-tmp
 # ------------------------------------------------------------
 # 5. 清理第三方 Feed 构建冲突，彻底修复 tcping 缺失问题（动态生成标准 OpenWrt 包）
 # ------------------------------------------------------------
-# ============================================================
-# [DIY-P2] 1. 彻底清理引发 Kconfig 循环依赖和 Warning 的病态包
-# ============================================================
-echo ">>> [DIY-P2] 正在清理问题插件以修复 Kconfig 递归错误..."
 
-# 清理导致 recursive dependency error 的根源插件
-rm -rf feeds/helloworld/luci-app-fchomo package/feeds/helloworld/luci-app-fchomo 2>/dev/null || true
-rm -rf feeds/helloworld/luci-app-homeproxy package/feeds/helloworld/luci-app-homeproxy 2>/dev/null || true
-rm -rf feeds/helloworld/luci-app-momo feeds/helloworld/momo package/feeds/helloworld/luci-app-momo package/feeds/helloworld/momo 2>/dev/null || true
-
-# 清理导致 Warning 的缺失依赖插件
-rm -rf feeds/helloworld/luci-app-daede package/feeds/helloworld/luci-app-daede 2>/dev/null || true
-rm -rf feeds/helloworld/dae feeds/helloworld/daed 2>/dev/null || true
-rm -rf feeds/helloworld/tcping feeds/kenzo/tcping package/feeds/helloworld/tcping package/feeds/kenzo/tcping 2>/dev/null || true
+# ============================================================
+# [DIY-P2] 1. 清理 kenzo 与 passwall2 之间的重复冲突包
+# ============================================================
+echo ">>> [DIY-P2] 正在清理 kenzo 与 passwall2 重复冲突包..."
+rm -rf feeds/kenzo/luci-app-passwall* package/feeds/kenzo/luci-app-passwall* 2>/dev/null || true
+rm -rf feeds/kenzo/passwall* package/feeds/kenzo/passwall* 2>/dev/null || true
+rm -rf feeds/kenzo/chinadns-ng package/feeds/kenzo/chinadns-ng 2>/dev/null || true
+rm -rf feeds/kenzo/sing-box package/feeds/kenzo/sing-box 2>/dev/null || true
+rm -rf feeds/kenzo/xray-core package/feeds/kenzo/xray-core 2>/dev/null || true
+rm -rf feeds/kenzo/tcping package/feeds/kenzo/tcping 2>/dev/null || true
 
 # ============================================================
 # [DIY-P2] 2. 导入 Passwall 官方标准的 tcping 包
@@ -130,10 +127,9 @@ git clone --depth=1 https://github.com/openwrt-passwall/openwrt-passwall-package
 cp -a /tmp/pw-pkgs/tcping package/tcping
 rm -rf /tmp/pw-pkgs
 
-# 解除 Passwall / Passwall2 Makefile 对 tcping 的硬绑定
-sed -i 's/+tcping//g' feeds/helloworld/luci-app-passwall2/Makefile 2>/dev/null || true
-sed -i 's/+tcping//g' package/feeds/helloworld/luci-app-passwall2/Makefile 2>/dev/null || true
-sed -i 's/+tcping//g' feeds/helloworld/luci-app-passwall/Makefile 2>/dev/null || true
+# 解除 Passwall2 Makefile 对 tcping 的硬绑定
+sed -i 's/+tcping//g' feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null || true
+sed -i 's/+tcping//g' package/feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null || true
 
 # ============================================================
 # [DIY-P2] 3. 刷新 OpenWrt 数据库索引并注入配置
