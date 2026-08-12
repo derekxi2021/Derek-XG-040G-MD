@@ -61,6 +61,21 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
+# ================= 🚀 [修改 1] 将 Ccache 提取至最前并设置为全局环境变量 =================
+    - name: Set global Ccache env
+      run: |
+        mkdir -p ~/.ccache
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+
+    - name: Cache Ccache Files
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-openwrt-ccache-${{ hashFiles('openwrt/.config') }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-ccache-
+# ====================================================================================
+
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
@@ -107,6 +122,11 @@ jobs:
           grep -q "CONFIG_PACKAGE_${pkg}=y" .config || echo "CONFIG_PACKAGE_${pkg}=y" >> .config
         done
 
+        # -------------------------------------------------------------
+        # 确保 make defconfig 不会把 ccache 挤掉
+        grep -q "CONFIG_CCACHE=y" .config || echo "CONFIG_CCACHE=y" >> .config
+        # -------------------------------------------------------------
+        
         echo ">>> 验证强制结果："
         grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|vlmcsd|luci-app-vlmcsd)=y" .config || echo "⚠️ 仍有包未选中"
         
@@ -138,32 +158,13 @@ jobs:
         echo "========== 4. 最终确认关键 CONFIG 行 =========="
         grep -n "airoha-npu\|vlmcsd\|airoha-en7581-npu" .config || true
 
-# ================= 🚀 [新增] 1. 配置 Ccache 并挂载缓存 =================
-    - name: Setup Ccache
-      run: |
-        cd openwrt
-        echo "CONFIG_CCACHE=y" >> .config
-        mkdir -p ~/.ccache
-        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-        ccache -M 5G 2>/dev/null || true
-
-    - name: Cache Ccache Files
-      uses: actions/cache@v4
-      with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-openwrt-ccache-${{ hashFiles('openwrt/.config') }}
-        restore-keys: |
-          ${{ runner.os }}-openwrt-ccache-
-
-    - name: Show Ccache Stats (Before Build)
-      run: |
-        ccache -s 2>/dev/null || true
-# =======================================================================
-
     - name: Compile the firmware
       id: compile
       run: |
         cd openwrt
+        # ===== [修改 2] 显式指定 CCACHE_DIR =====
+        export CCACHE_DIR=$HOME/.ccache
+        # ======================================
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         
