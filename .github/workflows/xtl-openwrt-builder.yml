@@ -61,12 +61,16 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-# ================= 🚀 [修改 1] 将 Ccache 提取至最前并设置为全局环境变量 =================
+# ================= 将 Ccache 提取至最前并设置为全局环境变量 =================
     - name: Set global Ccache env
       run: |
         mkdir -p ~/.ccache
         echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
 
+        # 优化 ccache 配置：设置最大缓存为 5G，并开启压缩以节省空间
+        ccache -M 5G 2>/dev/null || true
+        ccache -o compression=true 2>/dev/null || true
+        
     - name: Cache Ccache Files
       uses: actions/cache@v4
       with:
