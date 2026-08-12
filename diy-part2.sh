@@ -79,6 +79,9 @@ rm -rf package/luci-app-airoha-npu
 git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
 sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' package/luci-app-airoha-npu/Makefile
 
+# 修复 npu_version 提取逻辑，精准抓取版本号 1456.62
+sed -i 's|awk -F": " "{print $2}"|sed -n '\''s/.*NPU fw version: *\\([0-9.]*\\).*/\\1/p'\''|g' package/luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu
+
 # ------------------------------------------------------------
 # 4. 集成 KMS 激活服务 (vlmcsd & luci-app-vlmcsd)
 # ------------------------------------------------------------
