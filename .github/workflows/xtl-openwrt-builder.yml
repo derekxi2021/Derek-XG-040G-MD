@@ -138,12 +138,40 @@ jobs:
         echo "========== 4. 最终确认关键 CONFIG 行 =========="
         grep -n "airoha-npu\|vlmcsd\|airoha-en7581-npu" .config || true
 
+# ================= 🚀 [新增] 1. 配置 Ccache 并挂载缓存 =================
+    - name: Setup Ccache
+      run: |
+        cd openwrt
+        echo "CONFIG_CCACHE=y" >> .config
+        mkdir -p ~/.ccache
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+        ccache -M 5G 2>/dev/null || true
+
+    - name: Cache Ccache Files
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-openwrt-ccache-${{ hashFiles('openwrt/.config') }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-ccache-
+
+    - name: Show Ccache Stats (Before Build)
+      run: |
+        ccache -s 2>/dev/null || true
+# =======================================================================
+
     - name: Compile the firmware
       id: compile
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
+        
+        # === 打印 Ccache 命中率统计 ===
+        echo "========== Ccache Hit Rate =========="
+        ccache -s 2>/dev/null || true
+        echo "===================================="
+        
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
