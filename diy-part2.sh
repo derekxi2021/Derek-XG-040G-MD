@@ -141,15 +141,26 @@ sed -i 's/+tcping//g' feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null ||
 sed -i 's/+tcping//g' package/feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null || true
 
 # ============================================================
-# [DIY-P2] 3. 刷新 OpenWrt 数据库索引并注入配置
+# [DIY-P2] 3. 强行安装并修复 temp_status 软链接
 # ============================================================
-echo ">>> [DIY-P2] 刷新 package 缓存树..."
+echo ">>> [DIY-P2] 正在链接 temp_status 插件..."
+./scripts/feeds install -p temp_status -f luci-app-temp-status 2>/dev/null || true
+
+# ============================================================
+# [DIY-P2] 4. 重建索引树 (关键修复：防止 make defconfig 找不到包)
+# ============================================================
+echo ">>> [DIY-P2] 刷新 package 缓存树与索引..."
 rm -rf tmp/.packageinfo tmp/.packageauxvar tmp/.targetinfo
+./scripts/feeds update -i >/dev/null 2>&1 || true
 
-# 强制注入 tcping 选中状态
+# ============================================================
+# [DIY-P2] 5. 索引重建完成后，安全注入配置
+# ============================================================
 echo "CONFIG_PACKAGE_tcping=y" >> .config
+echo "CONFIG_PACKAGE_luci-app-temp-status=y" >> .config
+echo "CONFIG_PACKAGE_luci-i18n-temp-status-zh-cn=y" >> .config
 
-echo ">>> [DIY-P2] 修复完成！Kconfig 递归依赖与 tcping 问题均已清理。"
+echo ">>> [DIY-P2] 修复完成！Kconfig 递归依赖、temp_status 与 tcping 问题均已清理。"
 
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
