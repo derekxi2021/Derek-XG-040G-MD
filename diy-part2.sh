@@ -140,23 +140,27 @@ rm -rf /tmp/pw-pkgs
 sed -i 's/+tcping//g' feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null || true
 sed -i 's/+tcping//g' package/feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null || true
 
+
 # ============================================================
-# [DIY-P2] 3. 强行克隆 temp_status 插件到 package 目录（彻底避开 Feed 索引缺失坑）
+# [DIY-P2] 3. 清理坏 Feed 残留，直接 Clone temp_status 插件
 # ============================================================
-echo ">>> [DIY-P2] 正在克隆 temp_status 插件..."
+echo ">>> [DIY-P2] 正在清理 temp_status 残留并克隆插件..."
+
+# 1. 强行抹除 diy-part1 引入的坏 Feed 残留，防止索引报错
+rm -rf feeds/temp_status feeds/temp_status.index package/feeds/temp_status 2>/dev/null || true
+sed -i '/temp_status/d' feeds.conf feeds.conf.default 2>/dev/null || true
+
+# 2. 直接 Clone 源码到原生 package 目录
 rm -rf package/luci-app-temp-status
 git clone --depth=1 https://github.com/gSpotx2f/luci-app-temp-status.git package/luci-app-temp-status
 
 # ============================================================
-# [DIY-P2] 4. 重建索引树 (防止 make defconfig 找不到包)
+# [DIY-P2] 4. 重建索引树并安全注入配置
 # ============================================================
 echo ">>> [DIY-P2] 刷新 package 缓存树与索引..."
 rm -rf tmp/.packageinfo tmp/.packageauxvar tmp/.targetinfo
-./scripts/feeds update -i >/dev/null 2>&1 || true
 
-# ============================================================
-# [DIY-P2] 5. 索引重建完成后，安全注入配置
-# ============================================================
+# 写入配置
 echo "CONFIG_PACKAGE_tcping=y" >> .config
 echo "CONFIG_PACKAGE_luci-app-temp-status=y" >> .config
 echo "CONFIG_PACKAGE_luci-i18n-temp-status-zh-cn=y" >> .config
