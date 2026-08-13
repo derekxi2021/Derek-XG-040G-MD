@@ -75,9 +75,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-openwrt-ccache-${{ github.sha }}
+        key: ${{ runner.os }}-openwrt-ccache-v2-${{ github.sha }}
         restore-keys: |
-          ${{ runner.os }}-openwrt-ccache-
+          ${{ runner.os }}-openwrt-ccache-v2-
 # ====================================================================================
 
     - name: Load custom feeds
