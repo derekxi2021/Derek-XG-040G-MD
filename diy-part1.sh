@@ -21,4 +21,4 @@ echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> feeds.conf.d
 echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages' >>feeds.conf.default
 echo 'src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2' >>feeds.conf.default
 #echo 'src-git airohanpu https://github.com/rchen14b/luci-app-airoha-npu' >>feeds.conf.default
-echo 'src-git temp_status https://github.com/morytyann/openwrt-luci-app-temp-status.git' >> feeds.conf.default
+echo 'src-git temp_status https://github.com/gSpotx2f/luci-app-temp-status.git' >> feeds.conf.default
