@@ -61,16 +61,20 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-# ================= 将 Ccache 提取至最前并设置为全局环境变量 =================
+    # 1. 必须先用 apt 安装系统级的 ccache 工具！
+    - name: Install Ccache host tool
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ccache
+
+    # 2. 设置环境变量与缓存目录
     - name: Set global Ccache env
       run: |
         mkdir -p ~/.ccache
         echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-
-        # 优化 ccache 配置：设置最大缓存为 5G，并开启压缩以节省空间
-        ccache -M 5G 2>/dev/null || true
-        ccache -o compression=true 2>/dev/null || true
-
+        echo "/usr/lib/ccache" >> $GITHUB_PATH
+        
+    # 3. 恢复/保存 Actions 缓存
     - name: Cache Ccache Files
       uses: actions/cache@v4
       with:
@@ -78,7 +82,13 @@ jobs:
         key: ${{ runner.os }}-openwrt-ccache-v2-${{ github.sha }}
         restore-keys: |
           ${{ runner.os }}-openwrt-ccache-v2-
-# ====================================================================================
+
+    # 4. 在 Actions 恢复完毕后，再初始化 ccache 参数！
+    - name: Init Ccache Config
+      run: |
+        ccache -M 5G
+        ccache -o compression=true
+        ccache -z
 
     - name: Load custom feeds
       run: |
@@ -114,8 +124,10 @@ jobs:
         cd openwrt
         make defconfig
         
-        # ========== defconfig 之后强制保住关键包 ==========
-        echo ">>> 强制重新选中关键包（防止被 defconfig 取消）"
+        # 强制将 Ccache 开关写入 OpenWrt 配置
+        sed -i '/CONFIG_CCACHE/d' .config
+        echo "CONFIG_CCACHE=y" >> .config    
+        
         for pkg in \
           airoha-en7581-npu-firmware \
           luci-app-airoha-npu \
@@ -127,11 +139,6 @@ jobs:
           sed -i "s/# CONFIG_PACKAGE_${pkg} is not set/CONFIG_PACKAGE_${pkg}=y/" .config 2>/dev/null || true
           grep -q "CONFIG_PACKAGE_${pkg}=y" .config || echo "CONFIG_PACKAGE_${pkg}=y" >> .config
         done
-
-        # -------------------------------------------------------------
-        # 确保 make defconfig 不会把 ccache 挤掉
-        grep -q "CONFIG_CCACHE=y" .config || echo "CONFIG_CCACHE=y" >> .config
-        # -------------------------------------------------------------
         
         echo ">>> 验证强制结果："
         grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|vlmcsd|luci-app-vlmcsd)=y" .config || echo "⚠️ 仍有包未选中"
@@ -168,18 +175,20 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        # ===== [修改 2] 显式指定 CCACHE_DIR，强行让系统编译工具优先走 ccache =====
+
+        # 显式声明 Ccache 路径
         export CCACHE_DIR=$HOME/.ccache
-        export PATH="/usr/lib/ccache:$PATH"
-        echo "CONFIG_CCACHE=y" >> .config
-        # ======================================
-    
+        
+        # 强制让 OpenWrt 的 Host 工具链调用 Ccache
+        mkdir -p staging_dir/host/bin
+        ln -sf /usr/bin/ccache staging_dir/host/bin/ccache 2>/dev/null || true
+        
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         
-        # === 打印 Ccache 命中率统计 ===
+        # 打印编译完成后的缓存命中率
         echo "========== Ccache Hit Rate =========="
-        ccache -s 2>/dev/null || true
+        ccache -s
         echo "===================================="
         
         echo "status=success" >> $GITHUB_OUTPUT
@@ -187,6 +196,10 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
+    - name: Check Ccache Stats
+      run: |
+        ccache -s
+        
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
