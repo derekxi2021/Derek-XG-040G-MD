@@ -176,17 +176,19 @@ jobs:
       run: |
         cd openwrt
 
-        # 显式声明 Ccache 路径
+        # 1. 显式指定全局 Ccache 目录与配置
         export CCACHE_DIR=$HOME/.ccache
+        export CCACHE_COMPILERCHECK=content
         
-        # 强制让 OpenWrt 的 Host 工具链调用 Ccache
+        # 2. 强行把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
         mkdir -p staging_dir/host/bin
         ln -sf /usr/bin/ccache staging_dir/host/bin/ccache 2>/dev/null || true
         
+        # 3. 告诉 OpenWrt 编译系统直接使用 ccache 封装
         echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        make -j$(nproc) CCACHE_DIR=$HOME/.ccache || make -j1 CCACHE_DIR=$HOME/.ccache || make -j1 V=s
         
-        # 打印编译完成后的缓存命中率
+        # 4. 打印编译完成后的缓存统计
         echo "========== Ccache Hit Rate =========="
         ccache -s
         echo "===================================="
