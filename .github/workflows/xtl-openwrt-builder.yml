@@ -70,12 +70,12 @@ jobs:
         # 优化 ccache 配置：设置最大缓存为 5G，并开启压缩以节省空间
         ccache -M 5G 2>/dev/null || true
         ccache -o compression=true 2>/dev/null || true
-        
+
     - name: Cache Ccache Files
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-openwrt-ccache-${{ hashFiles('openwrt/.config') }}
+        key: ${{ runner.os }}-openwrt-ccache-${{ github.sha }}
         restore-keys: |
           ${{ runner.os }}-openwrt-ccache-
 # ====================================================================================
@@ -166,9 +166,12 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        # ===== [修改 2] 显式指定 CCACHE_DIR =====
+        # ===== [修改 2] 显式指定 CCACHE_DIR，强行让系统编译工具优先走 ccache =====
         export CCACHE_DIR=$HOME/.ccache
+        export PATH="/usr/lib/ccache:$PATH"
+        echo "CONFIG_CCACHE=y" >> .config
         # ======================================
+    
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         
