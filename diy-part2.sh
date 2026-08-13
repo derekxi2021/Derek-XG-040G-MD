@@ -141,13 +141,14 @@ sed -i 's/+tcping//g' feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null ||
 sed -i 's/+tcping//g' package/feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null || true
 
 # ============================================================
-# [DIY-P2] 3. 强行安装并修复 temp_status 软链接
+# [DIY-P2] 3. 强行克隆 temp_status 插件到 package 目录（彻底避开 Feed 索引缺失坑）
 # ============================================================
-echo ">>> [DIY-P2] 正在链接 temp_status 插件..."
-./scripts/feeds install -p temp_status -f luci-app-temp-status 2>/dev/null || true
+echo ">>> [DIY-P2] 正在克隆 temp_status 插件..."
+rm -rf package/luci-app-temp-status
+git clone --depth=1 https://github.com/gSpotx2f/luci-app-temp-status.git package/luci-app-temp-status
 
 # ============================================================
-# [DIY-P2] 4. 重建索引树 (关键修复：防止 make defconfig 找不到包)
+# [DIY-P2] 4. 重建索引树 (防止 make defconfig 找不到包)
 # ============================================================
 echo ">>> [DIY-P2] 刷新 package 缓存树与索引..."
 rm -rf tmp/.packageinfo tmp/.packageauxvar tmp/.targetinfo
