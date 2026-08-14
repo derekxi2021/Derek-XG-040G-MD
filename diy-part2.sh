@@ -140,19 +140,23 @@ rm -rf /tmp/pw-pkgs
 sed -i 's/+tcping//g' feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null || true
 sed -i 's/+tcping//g' package/feeds/passwall2/luci-app-passwall2/Makefile 2>/dev/null || true
 
-
 # ============================================================
-# [DIY-P2] 3. 清理坏 Feed 残留，直接 Clone temp_status 插件
+# [DIY-P2] 3. 清理坏 Feed 残留，Clone CPU & Temp Status 插件
 # ============================================================
-echo ">>> [DIY-P2] 正在清理 temp_status 残留并克隆插件..."
+echo ">>> [DIY-P2] 正在清理 temp_status 残留并克隆 CPU 与温度插件..."
 
 # 1. 强行抹除 diy-part1 引入的坏 Feed 残留，防止索引报错
 rm -rf feeds/temp_status feeds/temp_status.index package/feeds/temp_status 2>/dev/null || true
 sed -i '/temp_status/d' feeds.conf feeds.conf.default 2>/dev/null || true
 
-# 2. 直接 Clone 源码到原生 package 目录
-rm -rf package/luci-app-temp-status
+# 2. 直接 Clone 源码到原生 package 目录 (CPU 状态 & 温度状态)
+rm -rf package/luci-app-cpu-status package/luci-app-temp-status
+git clone --depth=1 https://github.com/gSpotx2f/luci-app-cpu-status.git package/luci-app-cpu-status
 git clone --depth=1 https://github.com/gSpotx2f/luci-app-temp-status.git package/luci-app-temp-status
+
+# 3. 注入 MTK/Airoha CPU 温度节点修复补丁 (防止概览卡片漏显温度)
+echo ">>> [DIY-P2] 正在修补 LuCI 概览页 CPU 温度读取节点..."
+find package/ -type f \( -name "luci" -o -name "10_system.js" \) -exec sed -i 's|/sys/class/hwmon/hwmon.*/temp1_input|/sys/class/thermal/thermal_zone0/temp|g' {} + 2>/dev/null || true
 
 # ============================================================
 # [DIY-P2] 4. 重建索引树并安全注入配置
@@ -160,12 +164,16 @@ git clone --depth=1 https://github.com/gSpotx2f/luci-app-temp-status.git package
 echo ">>> [DIY-P2] 刷新 package 缓存树与索引..."
 rm -rf tmp/.packageinfo tmp/.packageauxvar tmp/.targetinfo
 
-# 写入配置
-echo "CONFIG_PACKAGE_tcping=y" >> .config
-echo "CONFIG_PACKAGE_luci-app-temp-status=y" >> .config
-echo "CONFIG_PACKAGE_luci-i18n-temp-status-zh-cn=y" >> .config
+# 写入配置 (tcping、cpu-status、temp-status 及其中文语言包)
+cat << 'EOF' >> .config
+CONFIG_PACKAGE_tcping=y
+CONFIG_PACKAGE_luci-app-cpu-status=y
+CONFIG_PACKAGE_luci-i18n-cpu-status-zh-cn=y
+CONFIG_PACKAGE_luci-app-temp-status=y
+CONFIG_PACKAGE_luci-i18n-temp-status-zh-cn=y
+EOF
 
-echo ">>> [DIY-P2] 修复完成！Kconfig 递归依赖、temp_status 与 tcping 问题均已清理。"
+echo ">>> [DIY-P2] 修复完成！CPU/Temp 插件与温度节点映射均已配置完毕。"
 
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
