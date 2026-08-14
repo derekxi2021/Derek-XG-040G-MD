@@ -182,14 +182,15 @@ jobs:
         # 1. 显式指定全局 Ccache 目录与配置
         export CCACHE_DIR=$HOME/.ccache
         export CCACHE_COMPILERCHECK=content
+        export BUILD_LOG=1   # 强行全局开启日志记录（防止重试时失效）
         
         # 2. 强行把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
         mkdir -p staging_dir/host/bin
         ln -sf /usr/bin/ccache staging_dir/host/bin/ccache 2>/dev/null || true
         
-        # 3. 开启 BUILD_LOG=1 记录编译时间与日志
+        # 3. 执行编译（全局 BUILD_LOG 已生效）
         echo -e "$(nproc) thread compile"
-        make -j$(nproc) CCACHE_DIR=$HOME/.ccache BUILD_LOG=1 || make -j1 CCACHE_DIR=$HOME/.ccache BUILD_LOG=1 || make -j1 V=s BUILD_LOG=1
+        make -j$(nproc) || make -j1 V=s
         
         # 4. 打印编译完成后的缓存统计
         echo "========== Ccache Hit Rate =========="
@@ -201,16 +202,26 @@ jobs:
         echo "          📦 各 Package 编译耗时排行榜 (Top 30)    "
         echo "=================================================="
         if [ -d "logs" ]; then
-          find logs/ -name "*.log" -exec grep -H "duration" {} + 2>/dev/null | \
-          awk -F':' '{
+          # 提取带有 duration 的日志并计算秒数
+          RESULT=$(grep -rn "duration" logs/ 2>/dev/null | awk -F':' '{
             split($1, path_parts, "/");
-            pkg_name = path_parts[length(path_parts)-1];
-            duration = $NF;
-            gsub(/[^0-9]/, "", duration);
-            if (duration != "") printf "%-35s %d 秒 (%d 分 %d 秒)\n", pkg_name, duration, duration/60, duration%60;
-          }' | \
-          sort -k2 -nr | \
-          head -n 30
+            pkg = path_parts[length(path_parts)-1];
+            if (pkg == "logs" || pkg == "") pkg = path_parts[length(path_parts)];
+            
+            sec = $NF;
+            gsub(/[^0-9]/, "", sec);
+            if (sec != "" && sec > 0) {
+              printf "%-35s %5d 秒 (%2d 分 %02d 秒)\n", pkg, sec, sec/60, sec%60;
+            }
+          }' | sort -k2 -nr | uniq | head -n 30)
+
+          if [ -n "$RESULT" ]; then
+            echo "$RESULT"
+          else
+            echo "ℹ️  说明：当前未捕获到耗时较长的编译日志。"
+            echo "   这通常是因为 Ccache 命中率极高 (99%+)，大部分包直接命中缓存跳过了编译。"
+            echo "   共找到 $(find logs/ -type f 2>/dev/null | wc -l) 个日志文件。"
+          fi
         else
           echo "未找到 logs 目录"
         fi
