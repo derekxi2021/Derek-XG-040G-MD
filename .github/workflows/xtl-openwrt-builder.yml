@@ -58,19 +58,6 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
-    
-    - name: Setup Rust Toolchain
-      run: |
-        # 1. 快速安装 Rust 官方 stable 工具链
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        
-        # 2. ⚠️ 关键步骤：把 Cargo 路径写入 Actions 的全局 GITHUB_PATH，确保后续所有 Step 都能读取到 rustc
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        
-        # 3. 验证安装
-        source $HOME/.cargo/env
-        rustc --version
-        cargo --version
         
     - name: Clone source code
       working-directory: /workdir
@@ -143,44 +130,62 @@ jobs:
         cd openwrt
         #make defconfig
       
-        # 1. 显式引入 Cargo 环境变量
-        [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
-
-        # 2. 写入全局编译与 External Toolchain 配置
         echo "CONFIG_CCACHE=y" >> .config
+        # 只要 Go 外部工具链（可选）；不要 EXTERNAL_HOST_RUST
         echo "CONFIG_USE_EXTERNAL_HOST_GOLANG=y" >> .config
-        echo "CONFIG_USE_EXTERNAL_HOST_RUST=y" >> .config
+        sed -i '/CONFIG_USE_EXTERNAL_HOST_RUST/d' .config
+        echo "# CONFIG_USE_EXTERNAL_HOST_RUST is not set" >> .config
 
-        # 3. 强制写入自定义包
+        # 强制选中你真正需要的包（不要 shadowsocks-rust-*）
         for pkg in \
           airoha-en7581-npu-firmware \
           luci-app-airoha-npu \
           luci-i18n-airoha-npu-zh-cn \
           vlmcsd \
           luci-app-vlmcsd \
-          luci-i18n-vlmcsd-zh-cn \
-          shadowsocks-rust-sslocal
+          luci-i18n-vlmcsd-zh-cn
         do
           sed -i "s/# CONFIG_PACKAGE_${pkg} is not set/CONFIG_PACKAGE_${pkg}=y/" .config 2>/dev/null || true
           grep -q "CONFIG_PACKAGE_${pkg}=y" .config || echo "CONFIG_PACKAGE_${pkg}=y" >> .config
         done
 
-        # 4. 执行 defconfig 展开并平衡依赖
         make defconfig
 
-        # 5. 【诊断】完整打印工具链与包选中状态
-        echo "========== 编译配置诊断 =========="
-        if grep -q "CONFIG_USE_EXTERNAL_HOST_RUST=y" .config; then
-          echo "✔ 外部 Rust 工具链已成功开启！"
-        else
-          echo "⚠️ 警告：外部 Rust 工具链配置未生效！"
-        fi
+        # ★ 关键：defconfig 后再次强制关掉 SS-Rust（aarch64 默认会打开）
+        for opt in \
+          luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client \
+          luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server \
+          shadowsocks-rust-sslocal \
+          shadowsocks-rust-ssserver \
+          shadowsocks-rust-ssmanager \
+          shadowsocks-rust-ssurl \
+          shadowsocks-rust-ssservice
+        do
+          sed -i "/CONFIG_PACKAGE_${opt}/d" .config
+          echo "# CONFIG_PACKAGE_${opt} is not set" >> .config
+        done
+        sed -i '/CONFIG_USE_EXTERNAL_HOST_RUST/d' .config
+        echo "# CONFIG_USE_EXTERNAL_HOST_RUST is not set" >> .config
 
-        echo ">>> 强制目标包校验结果："
-        grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|luci-i18n-airoha-npu-zh-cn|vlmcsd|luci-app-vlmcsd|luci-i18n-vlmcsd-zh-cn|shadowsocks-rust-sslocal)=y" .config || echo "⚠️ 仍有包未选中"
-        echo "=================================="
-        
-        # 6. 下载源码包与清理无效文件
+        # 再跑一次 defconfig，然后若又被 select 拉回，再关一次
+        make defconfig
+        for opt in \
+          luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client \
+          luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server \
+          shadowsocks-rust-sslocal \
+          shadowsocks-rust-ssserver \
+          shadowsocks-rust-ssmanager \
+          shadowsocks-rust-ssurl \
+          shadowsocks-rust-ssservice
+        do
+          sed -i "/CONFIG_PACKAGE_${opt}/d" .config
+          echo "# CONFIG_PACKAGE_${opt} is not set" >> .config
+        done
+
+        echo "========== Rust / SS-Rust 诊断 =========="
+        grep -E 'Shadowsocks_Rust|shadowsocks-rust|EXTERNAL_HOST_RUST|PACKAGE_rust' .config || true
+        echo "========================================="
+
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -219,28 +224,22 @@ jobs:
         export CCACHE_BASEDIR=/workdir/openwrt
         export CCACHE_COMPILERCHECK=content
         export BUILD_LOG=1   # 强行全局开启日志记录
-        export PATH="/usr/lib/ccache:$HOME/.cargo/bin:/usr/share/rust/.cargo/bin:$PATH"
+        export PATH="/usr/lib/ccache:$PATH"
 
-        # 2. 检查 Host 系统 Rust / Cargo 环境
-        echo "========== Host Rust/Cargo 环境检查 =========="
-        cargo --version || echo "⚠️ 警告: 系统中未找到 cargo！"
-        rustc --version || echo "⚠️ 警告: 系统中未找到 rustc！"
-        echo "=============================================="
-
-        # 3. 把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
+        # 2. 把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
         mkdir -p staging_dir/host/bin
         ln -sf /usr/bin/ccache staging_dir/host/bin/ccache 2>/dev/null || true
         
-        # 4. 执行编译
+        # 3. 执行编译
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 V=s
         
-        # 5. 打印 Ccache 命中统计
+        # 4. 打印 Ccache 命中统计
         echo "========== Ccache Hit Rate =========="
         ccache -s
         echo "===================================="
 
-        # 6. 精确提取并打印各 Package 编译耗时排行榜 (Top 30)
+        # 5. 精确提取并打印各 Package 编译耗时排行榜 (Top 30)
         echo "=================================================="
         echo "          📦 各 Package 编译耗时排行榜 (Top 30)    "
         echo "=================================================="
