@@ -143,6 +143,16 @@ jobs:
         # 4. 第二次 make defconfig：让 OpenWrt 重新计算并保存剔除 Rust 后的依赖树
         make defconfig
         
+        # 5. 【诊断】确认 Rust 状态
+        echo "========== Rust 依赖诊断 =========="
+        if grep -E "^CONFIG_PACKAGE_.*(rust-ss|rustc|cargo|shadowsocks-rust)" .config; then
+          echo "⚠️ 警告：仍有以下包被拉起 Rust："
+          grep -E "^CONFIG_PACKAGE_.*(rust-ss|rustc|cargo|shadowsocks-rust)" .config
+        else
+          echo "✔ 完美！当前固件已成功剔除 Rust 源码编译。"
+        fi
+        echo "===================================="
+        
         # （下方保持原有的 pkg 过滤与强制选中逻辑）  
         for pkg in \
           airoha-en7581-npu-firmware \
