@@ -130,25 +130,18 @@ jobs:
         cd openwrt
         #make defconfig
         
-        # 先注入 Ccache 配置，再执行 defconfig 刷新依赖
+        # 1. 先注入 Ccache 配置，再执行 defconfig 刷新依赖
         echo "CONFIG_CCACHE=y" >> .config
 
-        # 在 make defconfig 之前强行关掉 PassWall2 的 Rust 选件和 sslocal
-        echo "# CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust is not set" >> .config
-        echo "# CONFIG_PACKAGE_shadowsocks-rust-sslocal is not set" >> .config
-        echo "# CONFIG_PACKAGE_shadowsocks-rust-ssserver is not set" >> .config
-        
+        # 2. 第一次 make defconfig：展开所有默认依赖项，把 sslocal 写入 .config
         make defconfig
 
-        # 【诊断】确认 Rust 状态（紧跟 defconfig 之后）
-        echo "========== Rust 依赖诊断 =========="
-        if grep -E "^CONFIG_PACKAGE_.*(rust-ss|rustc|cargo|shadowsocks-rust)" .config; then
-          echo "⚠️ 警告：仍有以下包被拉起 Rust："
-          grep -E "^CONFIG_PACKAGE_.*(rust-ss|rustc|cargo|shadowsocks-rust)" .config
-        else
-          echo "✔ 完美！当前固件已成功剔除 Rust 源码编译。"
-        fi
-        echo "===================================="
+        # 3. 在 defconfig 之后强制取消 shadowsocks-rust 选中
+        sed -i 's/CONFIG_PACKAGE_shadowsocks-rust-sslocal=y/# CONFIG_PACKAGE_shadowsocks-rust-sslocal is not set/' .config
+        sed -i 's/CONFIG_PACKAGE_shadowsocks-rust-ssserver=y/# CONFIG_PACKAGE_shadowsocks-rust-ssserver is not set/' .config
+
+        # 4. 第二次 make defconfig：让 OpenWrt 重新计算并保存剔除 Rust 后的依赖树
+        make defconfig
         
         # （下方保持原有的 pkg 过滤与强制选中逻辑）  
         for pkg in \
