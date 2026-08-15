@@ -130,28 +130,21 @@ jobs:
         cd openwrt
         #make defconfig
         
-        # 1. 先注入 Ccache 配置，再执行 defconfig 刷新依赖
+        # 1. 注入开启 External Host Rust & Go 以及 Ccache 配置
         echo "CONFIG_CCACHE=y" >> .config
+        echo "CONFIG_USE_EXTERNAL_HOST_GOLANG=y" >> .config
+        echo "CONFIG_USE_EXTERNAL_HOST_RUST=y" >> .config
 
-        # 2. 第一次 make defconfig：展开所有默认依赖项，把 sslocal 写入 .config
+        # 2. 刷新依赖树，让 OpenWrt 识别并绑定外部工具链
         make defconfig
 
-        # 3. 在 defconfig 之后强制取消 shadowsocks-rust 选中
-        sed -i 's/CONFIG_PACKAGE_shadowsocks-rust-sslocal=y/# CONFIG_PACKAGE_shadowsocks-rust-sslocal is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_shadowsocks-rust-ssserver=y/# CONFIG_PACKAGE_shadowsocks-rust-ssserver is not set/' .config
-
-        # 4. 第二次 make defconfig：让 OpenWrt 重新计算并保存剔除 Rust 后的依赖树
-        make defconfig
-        
-        # 5. 【诊断】确认 Rust 状态
-        echo "========== Rust 依赖诊断 =========="
-        if grep -E "^CONFIG_PACKAGE_.*(rust-ss|rustc|cargo|shadowsocks-rust)" .config; then
-          echo "⚠️ 警告：仍有以下包被拉起 Rust："
-          grep -E "^CONFIG_PACKAGE_.*(rust-ss|rustc|cargo|shadowsocks-rust)" .config
-        else
-          echo "✔ 完美！当前固件已成功剔除 Rust 源码编译。"
+        # 3. 【诊断】验证外部工具链与 ss-rust 开启状态
+        echo "========== External Toolchain 诊断 =========="
+        grep -E "CONFIG_USE_EXTERNAL_HOST_(RUST|GOLANG)=y" .config || echo "⚠️ 警告：外部工具链配置未生效！"
+        if grep -q "CONFIG_PACKAGE_shadowsocks-rust-sslocal=y" .config; then
+          echo "✔ 已选中 shadowsocks-rust-sslocal，将直接复用宿主机 Rust 进行秒级编译。"
         fi
-        echo "===================================="
+        echo "============================================="
         
         # （下方保持原有的 pkg 过滤与强制选中逻辑）  
         for pkg in \
@@ -202,27 +195,33 @@ jobs:
       run: |
         cd openwrt
 
-        # 1. 显式指定全局 Ccache 目录与配置
+        # 1. 显式指定全局 Ccache 目录与配置，并补全系统 Rust/Cargo 路径
         export CCACHE_DIR=/home/runner/.ccache
         export CCACHE_BASEDIR=/workdir/openwrt
         export CCACHE_COMPILERCHECK=content
         export BUILD_LOG=1   # 强行全局开启日志记录
-        export PATH="/usr/lib/ccache:$HOME/.cargo/bin:$PATH"  # 确保 ccache 最优先，同时补充 Cargo/Rust 路径
-        
-        # 2. 把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
+        export PATH="/usr/lib/ccache:$HOME/.cargo/bin:/usr/share/rust/.cargo/bin:$PATH"
+
+        # 2. 检查 Host 系统 Rust / Cargo 环境
+        echo "========== Host Rust/Cargo 环境检查 =========="
+        cargo --version || echo "⚠️ 警告: 系统中未找到 cargo！"
+        rustc --version || echo "⚠️ 警告: 系统中未找到 rustc！"
+        echo "=============================================="
+
+        # 3. 把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
         mkdir -p staging_dir/host/bin
         ln -sf /usr/bin/ccache staging_dir/host/bin/ccache 2>/dev/null || true
         
-        # 3. 执行编译
+        # 4. 执行编译
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 V=s
         
-        # 4. 打印 Ccache 命中统计
+        # 5. 打印 Ccache 命中统计
         echo "========== Ccache Hit Rate =========="
         ccache -s
         echo "===================================="
 
-        # 5. 精确提取并打印各 Package 编译耗时排行榜 (Top 30)
+        # 6. 精确提取并打印各 Package 编译耗时排行榜 (Top 30)
         echo "=================================================="
         echo "          📦 各 Package 编译耗时排行榜 (Top 30)    "
         echo "=================================================="
