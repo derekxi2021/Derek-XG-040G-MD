@@ -203,6 +203,22 @@ fi
 
 echo ">>> 最新 geosite / geoip 数据库注入完成！"
 
+# 强制关闭 SS-Rust，避免 aarch64 默认带上 rust/host
+for opt in \
+  luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client \
+  luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server \
+  shadowsocks-rust-sslocal \
+  shadowsocks-rust-ssserver \
+  shadowsocks-rust-ssmanager \
+  shadowsocks-rust-ssurl \
+  shadowsocks-rust-ssservice
+do
+  sed -i "/CONFIG_PACKAGE_${opt}/d" .config 2>/dev/null || true
+  echo "# CONFIG_PACKAGE_${opt} is not set" >> .config
+done
+sed -i '/CONFIG_USE_EXTERNAL_HOST_RUST/d' .config 2>/dev/null || true
+echo "# CONFIG_USE_EXTERNAL_HOST_RUST is not set" >> .config
+
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
 echo "========================================="
