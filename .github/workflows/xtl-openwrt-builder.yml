@@ -129,20 +129,31 @@ jobs:
       run: |
         cd openwrt
         #make defconfig
-        
-        # 1. 注入开启 External Host Rust & Go 以及 Ccache 配置
+
+        # 1. 确保在 make defconfig 之前，PATH 中已经包含了 Rust/Cargo
+        export PATH="$HOME/.cargo/bin:/usr/share/rust/.cargo/bin:$PATH"
+
+        # 2. 先执行一次 defconfig 展开基本配置
+        make defconfig
+
+        # 3. 写入配置（推荐使用 sed 替换或强制追加）
         echo "CONFIG_CCACHE=y" >> .config
         echo "CONFIG_USE_EXTERNAL_HOST_GOLANG=y" >> .config
         echo "CONFIG_USE_EXTERNAL_HOST_RUST=y" >> .config
 
-        # 2. 刷新依赖树，让 OpenWrt 识别并绑定外部工具链
+        # 4. 再次执行 make defconfig 刷新依赖
         make defconfig
 
-        # 3. 【诊断】验证外部工具链与 ss-rust 开启状态
+        # 5. 【诊断】验证外部工具链与 ss-rust 开启状态
         echo "========== External Toolchain 诊断 =========="
-        grep -E "CONFIG_USE_EXTERNAL_HOST_(RUST|GOLANG)=y" .config || echo "⚠️ 警告：外部工具链配置未生效！"
+        if grep -q "CONFIG_USE_EXTERNAL_HOST_RUST=y" .config; then
+          echo "✔ 外部 Rust 工具链已成功开启！"
+        else
+          echo "⚠️ 警告：外部 Rust 工具链配置未生效！OpenWrt 将回退到源码编译 rustc。"
+        fi
+
         if grep -q "CONFIG_PACKAGE_shadowsocks-rust-sslocal=y" .config; then
-          echo "✔ 已选中 shadowsocks-rust-sslocal，将直接复用宿主机 Rust 进行秒级编译。"
+          echo "✔ 已选中 shadowsocks-rust-sslocal。"
         fi
         echo "============================================="
         
