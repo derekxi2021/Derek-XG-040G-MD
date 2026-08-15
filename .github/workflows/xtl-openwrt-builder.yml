@@ -58,7 +58,20 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
-
+    
+    - name: Setup Rust Toolchain
+      run: |
+        # 1. 快速安装 Rust 官方 stable 工具链
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        
+        # 2. ⚠️ 关键步骤：把 Cargo 路径写入 Actions 的全局 GITHUB_PATH，确保后续所有 Step 都能读取到 rustc
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        
+        # 3. 验证安装
+        source $HOME/.cargo/env
+        rustc --version
+        cargo --version
+        
     - name: Clone source code
       working-directory: /workdir
       run: |
@@ -129,50 +142,45 @@ jobs:
       run: |
         cd openwrt
         #make defconfig
+      
+        # 1. 显式引入 Cargo 环境变量
+        [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
-        # 1. 确保在 make defconfig 之前，PATH 中已经包含了 Rust/Cargo
-        export PATH="$HOME/.cargo/bin:/usr/share/rust/.cargo/bin:$PATH"
-
-        # 2. 先执行一次 defconfig 展开基本配置
-        make defconfig
-
-        # 3. 写入配置（推荐使用 sed 替换或强制追加）
+        # 2. 写入全局编译与 External Toolchain 配置
         echo "CONFIG_CCACHE=y" >> .config
         echo "CONFIG_USE_EXTERNAL_HOST_GOLANG=y" >> .config
         echo "CONFIG_USE_EXTERNAL_HOST_RUST=y" >> .config
 
-        # 4. 再次执行 make defconfig 刷新依赖
-        make defconfig
-
-        # 5. 【诊断】验证外部工具链与 ss-rust 开启状态
-        echo "========== External Toolchain 诊断 =========="
-        if grep -q "CONFIG_USE_EXTERNAL_HOST_RUST=y" .config; then
-          echo "✔ 外部 Rust 工具链已成功开启！"
-        else
-          echo "⚠️ 警告：外部 Rust 工具链配置未生效！OpenWrt 将回退到源码编译 rustc。"
-        fi
-
-        if grep -q "CONFIG_PACKAGE_shadowsocks-rust-sslocal=y" .config; then
-          echo "✔ 已选中 shadowsocks-rust-sslocal。"
-        fi
-        echo "============================================="
-        
-        # （下方保持原有的 pkg 过滤与强制选中逻辑）  
+        # 3. 强制写入自定义包
         for pkg in \
           airoha-en7581-npu-firmware \
           luci-app-airoha-npu \
           luci-i18n-airoha-npu-zh-cn \
           vlmcsd \
           luci-app-vlmcsd \
-          luci-i18n-vlmcsd-zh-cn
+          luci-i18n-vlmcsd-zh-cn \
+          shadowsocks-rust-sslocal
         do
           sed -i "s/# CONFIG_PACKAGE_${pkg} is not set/CONFIG_PACKAGE_${pkg}=y/" .config 2>/dev/null || true
           grep -q "CONFIG_PACKAGE_${pkg}=y" .config || echo "CONFIG_PACKAGE_${pkg}=y" >> .config
         done
+
+        # 4. 执行 defconfig 展开并平衡依赖
+        make defconfig
+
+        # 5. 【诊断】完整打印工具链与包选中状态
+        echo "========== 编译配置诊断 =========="
+        if grep -q "CONFIG_USE_EXTERNAL_HOST_RUST=y" .config; then
+          echo "✔ 外部 Rust 工具链已成功开启！"
+        else
+          echo "⚠️ 警告：外部 Rust 工具链配置未生效！"
+        fi
+
+        echo ">>> 强制目标包校验结果："
+        grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|luci-i18n-airoha-npu-zh-cn|vlmcsd|luci-app-vlmcsd|luci-i18n-vlmcsd-zh-cn|shadowsocks-rust-sslocal)=y" .config || echo "⚠️ 仍有包未选中"
+        echo "=================================="
         
-        echo ">>> 验证强制结果："
-        grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|vlmcsd|luci-app-vlmcsd)=y" .config || echo "⚠️ 仍有包未选中"
-        
+        # 6. 下载源码包与清理无效文件
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
