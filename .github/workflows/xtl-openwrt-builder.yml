@@ -29,8 +29,10 @@ env:
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
   # ===== 下面是新增的 Ccache 极速命中参数 =====
-  CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime,file_stat_matches
-  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_DIR: /home/runner/.ccache
+  CCACHE_BASEDIR: /workdir/openwrt
+  CCACHE_NOHASHDIR: "true"
+  CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime,file_stat_matches,pch_defines
 
 jobs:
   build:
@@ -50,7 +52,7 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler dos2unix fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 cmake cpio curl device-tree-compiler dos2unix fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -82,14 +84,15 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-openwrt-ccache-v2-${{ github.sha }}
+        key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}
         restore-keys: |
-          ${{ runner.os }}-openwrt-ccache-v2-
+          ${{ runner.os }}-openwrt-ccache-
 
-    # 4. 在 Actions 恢复完毕后，再初始化 ccache 参数！
+    # 4. 初始化 ccache 参数
     - name: Init Ccache Config
       run: |
-        ccache -M 5G
+        mkdir -p ~/.ccache
+        ccache -M 10G
         ccache -o compression=true
         ccache -z
 
@@ -125,12 +128,13 @@ jobs:
       id: package
       run: |
         cd openwrt
+        #make defconfig
+        
+        # 先注入 Ccache 配置，再执行 defconfig 刷新依赖
+        echo "CONFIG_CCACHE=y" >> .config
         make defconfig
         
-        # 强制将 Ccache 开关写入 OpenWrt 配置
-        sed -i '/CONFIG_CCACHE/d' .config
-        echo "CONFIG_CCACHE=y" >> .config    
-        
+        # （下方保持原有的 pkg 过滤与强制选中逻辑）  
         for pkg in \
           airoha-en7581-npu-firmware \
           luci-app-airoha-npu \
@@ -180,9 +184,11 @@ jobs:
         cd openwrt
 
         # 1. 显式指定全局 Ccache 目录与配置
-        export CCACHE_DIR=$HOME/.ccache
+        export CCACHE_DIR=/home/runner/.ccache
+        export CCACHE_BASEDIR=/workdir/openwrt
         export CCACHE_COMPILERCHECK=content
-        export BUILD_LOG=1   # 强行全局开启日志记录（生成 openwrt/logs 目录）
+        export BUILD_LOG=1   # 强行全局开启日志记录
+        export PATH="/usr/lib/ccache:$PATH"  # 确保 ccache 符号链接最优先被调用
         
         # 2. 把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
         mkdir -p staging_dir/host/bin
