@@ -133,6 +133,16 @@ jobs:
         # 先注入 Ccache 配置，再执行 defconfig 刷新依赖
         echo "CONFIG_CCACHE=y" >> .config
         make defconfig
+
+        # 【诊断】确认 Rust 状态（紧跟 defconfig 之后）
+        echo "========== Rust 依赖诊断 =========="
+        if grep -E "^CONFIG_PACKAGE_.*rust.*=y" .config; then
+          echo "⚠️ 警告：仍有以下包被拉起 Rust："
+          grep -E "^CONFIG_PACKAGE_.*rust.*=y" .config
+        else
+          echo "✔ 完美！当前固件已成功剔除 Rust 源码编译。"
+        fi
+        echo "===================================="
         
         # （下方保持原有的 pkg 过滤与强制选中逻辑）  
         for pkg in \
@@ -188,7 +198,7 @@ jobs:
         export CCACHE_BASEDIR=/workdir/openwrt
         export CCACHE_COMPILERCHECK=content
         export BUILD_LOG=1   # 强行全局开启日志记录
-        export PATH="/usr/lib/ccache:$PATH"  # 确保 ccache 符号链接最优先被调用
+        export PATH="/usr/lib/ccache:$HOME/.cargo/bin:$PATH"  # 确保 ccache 最优先，同时补充 Cargo/Rust 路径
         
         # 2. 把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
         mkdir -p staging_dir/host/bin
