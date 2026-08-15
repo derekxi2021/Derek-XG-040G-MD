@@ -136,9 +136,9 @@ jobs:
 
         # 【诊断】确认 Rust 状态（紧跟 defconfig 之后）
         echo "========== Rust 依赖诊断 =========="
-        if grep -E "^CONFIG_PACKAGE_.*rust.*=y" .config; then
+        if grep -E "^CONFIG_PACKAGE_.*(rust-ss|rustc|cargo|shadowsocks-rust)" .config; then
           echo "⚠️ 警告：仍有以下包被拉起 Rust："
-          grep -E "^CONFIG_PACKAGE_.*rust.*=y" .config
+          grep -E "^CONFIG_PACKAGE_.*(rust-ss|rustc|cargo|shadowsocks-rust)" .config
         else
           echo "✔ 完美！当前固件已成功剔除 Rust 源码编译。"
         fi
