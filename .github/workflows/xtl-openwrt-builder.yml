@@ -132,6 +132,12 @@ jobs:
         
         # 先注入 Ccache 配置，再执行 defconfig 刷新依赖
         echo "CONFIG_CCACHE=y" >> .config
+
+        # 在 make defconfig 之前强行关掉 PassWall2 的 Rust 选件和 sslocal
+        echo "# CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust is not set" >> .config
+        echo "# CONFIG_PACKAGE_shadowsocks-rust-sslocal is not set" >> .config
+        echo "# CONFIG_PACKAGE_shadowsocks-rust-ssserver is not set" >> .config
+        
         make defconfig
 
         # 【诊断】确认 Rust 状态（紧跟 defconfig 之后）
