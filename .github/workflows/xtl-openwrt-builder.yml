@@ -182,78 +182,39 @@ jobs:
         # 1. 显式指定全局 Ccache 目录与配置
         export CCACHE_DIR=$HOME/.ccache
         export CCACHE_COMPILERCHECK=content
-        export BUILD_LOG=1   # 强行全局开启日志记录（防止重试时失效）
+        export BUILD_LOG=1   # 强行全局开启日志记录（生成 openwrt/logs 目录）
         
-        # 2. 强行把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
+        # 2. 把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
         mkdir -p staging_dir/host/bin
         ln -sf /usr/bin/ccache staging_dir/host/bin/ccache 2>/dev/null || true
         
-        # 3. 执行编译（全局 BUILD_LOG 已生效）
+        # 3. 执行编译
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 V=s
         
-        # 4. 打印编译完成后的缓存统计
+        # 4. 打印 Ccache 命中统计
         echo "========== Ccache Hit Rate =========="
         ccache -s
         echo "===================================="
-        
-        # 5. 抽样查看 3 个 Log 文件末尾 10 行（验证时间戳格式）
-        echo "=================================================="
-        echo "🔍 抽样查看 3 个 Log 文件末尾 10 行内容"
-        echo "=================================================="
-        if [ -d "logs" ]; then
-          find logs/ -type f -name "*.log" | head -n 3 | while read -r file; do
-            echo "📄 路径: $file"
-            tail -n 10 "$file"
-            echo "--------------------------------------------------"
-          done
-        else
-          echo "⚠️ 未找到 logs 目录"
-        fi
 
-        # 6. 统计并打印每个 Package 的编译耗时排行榜 (Top 30)
+        # 5. 精确提取并打印各 Package 编译耗时排行榜 (Top 30)
         echo "=================================================="
         echo "          📦 各 Package 编译耗时排行榜 (Top 30)    "
         echo "=================================================="
+        
+        # 穿透 logs 目录下所有层级，查找包含 time: 的日志行
         if [ -d "logs" ]; then
-          find logs/ -type f -name "*.log" | while read -r logfile; do
-            # 从日志末尾提取 real / time: 时间
-            sec=$(grep -E "(time:|real|user)" "$logfile" 2>/dev/null | tail -n 1 | awk '{
-              for(i=1;i<=NF;i++) {
-                if($i ~ /^[0-9]+(\.[0-9]+)?$/) { print int($i); exit }
-                if($i ~ /[0-9]+m[0-9]+/) {
-                  split($i, a, "m");
-                  m = a[1];
-                  s = a[2]; gsub(/s/, "", s);
-                  print int(m*60 + s); exit
-                }
-              }
-            }')
-
-            # 若日志文本未包含时间，取文件修改时间作为兜底
-            if [ -z "$sec" ] || [ "$sec" -eq 0 ]; then
-              sec=$(stat -c %Y "$logfile" 2>/dev/null || echo 0)
-            fi
-
-            # 提取包名
-            pkg_name=$(echo "$logfile" | awk -F'/' '{
-              if ($(NF-1) != "" && $(NF-1) != "logs") print $(NF-1);
-              else print $NF;
-            }')
-
-            if [ -n "$sec" ] && [ "$sec" -gt 0 ]; then
-              echo "$sec $pkg_name"
-            fi
-          done | sort -nr -k1 | head -n 30 | awk '{
-            sec = $1;
-            pkg = $2;
-            printf "%-35s %5d 秒 (%2d 分 %02d 秒)\n", pkg, sec, sec/60, sec%60;
-          }'
-
+          find logs/ -type f -exec grep -H "^time:" {} + | awk -F'#' '{
+            split($1, a, " "); 
+            pkg = a[2]; 
+            time = $4; 
+            if (time != "") printf "%7.2f 秒 (%2d 分 %02.0f 秒)  <--  %s\n", time, time/60, time%60, pkg
+          }' | sort -nr | head -n 30
+          
           echo "--------------------------------------------------"
-          echo "📊 检查摘要: 成功扫描了 $(find logs/ -type f -name "*.log" | wc -l) 个 package 日志。"
+          echo "📊 检查摘要: 成功匹配了 $(find logs/ -type f -exec grep -l "^time:" {} + | wc -l) 个 package 日志。"
         else
-          echo "未找到 logs 目录"
+          echo "⚠️ 未找到 logs 目录"
         fi
         echo "=================================================="
 
@@ -262,7 +223,7 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    # 7. 打包上传 openwrt/logs 目录供本地查看（放在 Compile Step 后面）
+    # 打包上传 openwrt/logs 目录供下载查看
     - name: Upload Build Logs Artifact
       uses: actions/upload-artifact@v4
       if: always()
