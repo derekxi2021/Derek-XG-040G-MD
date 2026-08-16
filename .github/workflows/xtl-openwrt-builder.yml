@@ -65,7 +65,20 @@ jobs:
         df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-
+    
+    - name: Install Go 1.26 toolchain
+      run: |
+        GO_VER=1.26.5   # 与 feeds 里 golang1.26 接近即可，可按需改
+        curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz" -o /tmp/go.tgz
+        sudo rm -rf /usr/local/go
+        sudo tar -C /usr/local -xzf /tmp/go.tgz
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+        export PATH="/usr/local/go/bin:$PATH"
+        go version
+        # 确认是完整 GOROOT（要有 bin/go）
+        test -x /usr/local/go/bin/go
+        ls /usr/local/go/bin/go
+        
     # 1. 必须先用 apt 安装系统级的 ccache 工具！
     - name: Install Ccache host tool
       run: |
@@ -129,10 +142,36 @@ jobs:
       run: |
         cd openwrt
         #make defconfig
+        export PATH="/usr/local/go/bin:$PATH"
+        export GOROOT=/usr/local/go
       
         echo "CONFIG_CCACHE=y" >> .config
-        # 只要 Go 外部工具链（可选）；不要 EXTERNAL_HOST_RUST
-        echo "CONFIG_USE_EXTERNAL_HOST_GOLANG=y" >> .config
+        
+        # 外部 Go 1.26 根目录（官方 tarball 解压位置）
+        sed -i '/CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT/d' .config
+        echo 'CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"' >> .config
+        
+        # 若 Kconfig 里有该选项：尽量不本地编 bootstrap
+        sed -i '/CONFIG_GOLANG_BUILD_BOOTSTRAP/d' .config
+        echo '# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set' >> .config
+        
+        # 旧选项可留可不留，不能替代上面两项
+        echo 'CONFIG_USE_EXTERNAL_HOST_GOLANG=y' >> .config
+        
+        make defconfig
+        
+        # defconfig 可能冲掉字符串选项，再写一次
+        sed -i '/CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT/d' .config
+        echo 'CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"' >> .config
+        sed -i '/CONFIG_GOLANG_BUILD_BOOTSTRAP/d' .config
+        echo '# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set' >> .config
+        make defconfig
+        
+        echo ">>> Go bootstrap 相关配置："
+        grep -E 'GOLANG_EXTERNAL_BOOTSTRAP|GOLANG_BUILD_BOOTSTRAP|USE_EXTERNAL_HOST_GOLANG' .config || true
+        /usr/local/go/bin/go version
+
+        # 不要 EXTERNAL_HOST_RUST
         sed -i '/CONFIG_USE_EXTERNAL_HOST_RUST/d' .config
         echo "# CONFIG_USE_EXTERNAL_HOST_RUST is not set" >> .config
 
@@ -186,6 +225,16 @@ jobs:
         grep -E 'Shadowsocks_Rust|shadowsocks-rust|EXTERNAL_HOST_RUST|PACKAGE_rust' .config || true
         echo "========================================="
 
+        # ★ 最后一次 defconfig 之后，再次固定 Go 外部引导（防止被冲掉）
+        sed -i '/CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT/d' .config
+        echo 'CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"' >> .config
+        sed -i '/CONFIG_GOLANG_BUILD_BOOTSTRAP/d' .config
+        echo '# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set' >> .config
+
+        echo ">>> 最终 Go 配置确认："
+        grep -E 'GOLANG_EXTERNAL_BOOTSTRAP|GOLANG_BUILD_BOOTSTRAP|USE_EXTERNAL_HOST_GOLANG' .config || true
+        /usr/local/go/bin/go version
+        
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -219,18 +268,21 @@ jobs:
       run: |
         cd openwrt
 
-        # 1. 显式指定全局 Ccache 目录与配置，并补全系统 Rust/Cargo 路径
+        # 0. Go 1.26（与 Install Go 1.26 toolchain 步骤配合）
+        export PATH="/usr/local/go/bin:/usr/lib/ccache:$PATH"
+        export GOROOT=/usr/local/go
+        go version
+
+        # 1. Ccache
         export CCACHE_DIR=/home/runner/.ccache
         export CCACHE_BASEDIR=/workdir/openwrt
         export CCACHE_COMPILERCHECK=content
-        export BUILD_LOG=1   # 强行全局开启日志记录
-        export PATH="/usr/lib/ccache:$PATH"
+        export BUILD_LOG=1
 
-        # 2. 把系统的 ccache 注入到 OpenWrt 的 PATH 最前端
         mkdir -p staging_dir/host/bin
         ln -sf /usr/bin/ccache staging_dir/host/bin/ccache 2>/dev/null || true
-        
-        # 3. 执行编译
+
+        # 2. 编译
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 V=s
         
