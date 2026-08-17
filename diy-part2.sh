@@ -219,6 +219,15 @@ done
 sed -i '/CONFIG_USE_EXTERNAL_HOST_RUST/d' .config 2>/dev/null || true
 echo "# CONFIG_USE_EXTERNAL_HOST_RUST is not set" >> .config
 
+# =========================================================
+# 修正 Airoha PPE debugfs 路径匹配 (加在文件最末尾)
+# =========================================================
+find package/ -type f \( -name "*.lua" -o -name "*.js" -o -name "*.sh" -o -name "*.c" \) \
+    -exec sed -i 's/\/sys\/kernel\/debug\/ppe0\/bind/\/sys\/kernel\/debug\/ppe\/bind/g' {} +
+
+find package/ -type f \( -name "*.lua" -o -name "*.js" -o -name "*.sh" -o -name "*.c" \) \
+    -exec sed -i 's/\/sys\/kernel\/debug\/ppe0\/entries/\/sys\/kernel\/debug\/ppe\/entries/g' {} +
+    
 echo "========================================="
 echo ">>> diy-part2.sh 全部执行完毕！"
 echo "========================================="
