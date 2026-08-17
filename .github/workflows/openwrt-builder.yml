@@ -10,7 +10,7 @@
 # See /LICENSE for more information.
 #
 
-name: OpenWrt Builder
+name: XiangTailiang's OpenWrt Builder
 
 on:
   repository_dispatch:
@@ -28,6 +28,11 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
+  # ===== 下面是新增的 Ccache 极速命中参数 =====
+  CCACHE_DIR: /home/runner/.ccache
+  CCACHE_BASEDIR: /workdir/openwrt
+  CCACHE_NOHASHDIR: "true"
+  CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime,file_stat_matches,pch_defines
 
 jobs:
   build:
@@ -47,19 +52,62 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler dos2unix fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 cmake cpio curl device-tree-compiler dos2unix fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
-
+        
     - name: Clone source code
       working-directory: /workdir
       run: |
         df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+    
+    - name: Install Go 1.26 toolchain
+      run: |
+        GO_VER=1.26.5   # 与 feeds 里 golang1.26 接近即可，可按需改
+        curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz" -o /tmp/go.tgz
+        sudo rm -rf /usr/local/go
+        sudo tar -C /usr/local -xzf /tmp/go.tgz
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+        export PATH="/usr/local/go/bin:$PATH"
+        go version
+        # 确认是完整 GOROOT（要有 bin/go）
+        test -x /usr/local/go/bin/go
+        ls /usr/local/go/bin/go
+        
+    # 1. 必须先用 apt 安装系统级的 ccache 工具！
+    - name: Install Ccache host tool
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ccache
+
+    # 2. 设置环境变量与缓存目录
+    - name: Set global Ccache env
+      run: |
+        mkdir -p ~/.ccache
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+        echo "/usr/lib/ccache" >> $GITHUB_PATH
+        
+    # 3. 恢复/保存 Actions 缓存
+    - name: Cache Ccache Files
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-ccache-
+
+    # 4. 初始化 ccache 参数
+    - name: Init Ccache Config
+      run: |
+        mkdir -p ~/.ccache
+        ccache -M 10G
+        ccache -o compression=true
+        ccache -z
 
     - name: Load custom feeds
       run: |
@@ -71,14 +119,16 @@ jobs:
     - name: Clean feeds
       run: |
         cd openwrt
-        rm -rf feeds
-
+        #rm -rf feeds
+        ./scripts/feeds clean 2>/dev/null || true
+        rm -rf feeds package/feeds
+        
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
-      
+
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files
@@ -91,10 +141,41 @@ jobs:
       id: package
       run: |
         cd openwrt
+        #make defconfig
+        export PATH="/usr/local/go/bin:$PATH"
+        export GOROOT=/usr/local/go
+      
+        echo "CONFIG_CCACHE=y" >> .config
+        
+        # 外部 Go 1.26 根目录（官方 tarball 解压位置）
+        sed -i '/CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT/d' .config
+        echo 'CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"' >> .config
+        
+        # 若 Kconfig 里有该选项：尽量不本地编 bootstrap
+        sed -i '/CONFIG_GOLANG_BUILD_BOOTSTRAP/d' .config
+        echo '# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set' >> .config
+        
+        # 旧选项可留可不留，不能替代上面两项
+        echo 'CONFIG_USE_EXTERNAL_HOST_GOLANG=y' >> .config
+        
         make defconfig
         
-        # ========== defconfig 之后强制保住关键包 ==========
-        echo ">>> 强制重新选中关键包（防止被 defconfig 取消）"
+        # defconfig 可能冲掉字符串选项，再写一次
+        sed -i '/CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT/d' .config
+        echo 'CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"' >> .config
+        sed -i '/CONFIG_GOLANG_BUILD_BOOTSTRAP/d' .config
+        echo '# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set' >> .config
+        make defconfig
+        
+        echo ">>> Go bootstrap 相关配置："
+        grep -E 'GOLANG_EXTERNAL_BOOTSTRAP|GOLANG_BUILD_BOOTSTRAP|USE_EXTERNAL_HOST_GOLANG' .config || true
+        /usr/local/go/bin/go version
+
+        # 不要 EXTERNAL_HOST_RUST
+        sed -i '/CONFIG_USE_EXTERNAL_HOST_RUST/d' .config
+        echo "# CONFIG_USE_EXTERNAL_HOST_RUST is not set" >> .config
+
+        # 强制选中你真正需要的包（不要 shadowsocks-rust-*）
         for pkg in \
           airoha-en7581-npu-firmware \
           luci-app-airoha-npu \
@@ -107,8 +188,52 @@ jobs:
           grep -q "CONFIG_PACKAGE_${pkg}=y" .config || echo "CONFIG_PACKAGE_${pkg}=y" >> .config
         done
 
-        echo ">>> 验证强制结果："
-        grep -E "CONFIG_PACKAGE_(airoha-en7581-npu-firmware|luci-app-airoha-npu|vlmcsd|luci-app-vlmcsd)=y" .config || echo "⚠️ 仍有包未选中"
+        make defconfig
+
+        # ★ 关键：defconfig 后再次强制关掉 SS-Rust（aarch64 默认会打开）
+        for opt in \
+          luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client \
+          luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server \
+          shadowsocks-rust-sslocal \
+          shadowsocks-rust-ssserver \
+          shadowsocks-rust-ssmanager \
+          shadowsocks-rust-ssurl \
+          shadowsocks-rust-ssservice
+        do
+          sed -i "/CONFIG_PACKAGE_${opt}/d" .config
+          echo "# CONFIG_PACKAGE_${opt} is not set" >> .config
+        done
+        sed -i '/CONFIG_USE_EXTERNAL_HOST_RUST/d' .config
+        echo "# CONFIG_USE_EXTERNAL_HOST_RUST is not set" >> .config
+
+        # 再跑一次 defconfig，然后若又被 select 拉回，再关一次
+        make defconfig
+        for opt in \
+          luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client \
+          luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server \
+          shadowsocks-rust-sslocal \
+          shadowsocks-rust-ssserver \
+          shadowsocks-rust-ssmanager \
+          shadowsocks-rust-ssurl \
+          shadowsocks-rust-ssservice
+        do
+          sed -i "/CONFIG_PACKAGE_${opt}/d" .config
+          echo "# CONFIG_PACKAGE_${opt} is not set" >> .config
+        done
+
+        echo "========== Rust / SS-Rust 诊断 =========="
+        grep -E 'Shadowsocks_Rust|shadowsocks-rust|EXTERNAL_HOST_RUST|PACKAGE_rust' .config || true
+        echo "========================================="
+
+        # ★ 最后一次 defconfig 之后，再次固定 Go 外部引导（防止被冲掉）
+        sed -i '/CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT/d' .config
+        echo 'CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"' >> .config
+        sed -i '/CONFIG_GOLANG_BUILD_BOOTSTRAP/d' .config
+        echo '# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set' >> .config
+
+        echo ">>> 最终 Go 配置确认："
+        grep -E 'GOLANG_EXTERNAL_BOOTSTRAP|GOLANG_BUILD_BOOTSTRAP|USE_EXTERNAL_HOST_GOLANG' .config || true
+        /usr/local/go/bin/go version
         
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
@@ -142,13 +267,68 @@ jobs:
       id: compile
       run: |
         cd openwrt
+
+        # 0. Go 1.26（与 Install Go 1.26 toolchain 步骤配合）
+        export PATH="/usr/local/go/bin:/usr/lib/ccache:$PATH"
+        export GOROOT=/usr/local/go
+        go version
+
+        # 1. Ccache
+        export CCACHE_DIR=/home/runner/.ccache
+        export CCACHE_BASEDIR=/workdir/openwrt
+        export CCACHE_COMPILERCHECK=content
+        export BUILD_LOG=1
+
+        mkdir -p staging_dir/host/bin
+        ln -sf /usr/bin/ccache staging_dir/host/bin/ccache 2>/dev/null || true
+
+        # 2. 编译
         echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        make -j$(nproc) || make -j1 V=s
+        
+        # 4. 打印 Ccache 命中统计
+        echo "========== Ccache Hit Rate =========="
+        ccache -s
+        echo "===================================="
+
+        # 5. 精确提取并打印各 Package 编译耗时排行榜 (Top 30)
+        echo "=================================================="
+        echo "          📦 各 Package 编译耗时排行榜 (Top 30)    "
+        echo "=================================================="
+        
+        # 穿透 logs 目录下所有层级，查找包含 time: 的日志行
+        if [ -d "logs" ]; then
+          find logs/ -type f -exec grep -H "^time:" {} + | awk -F'#' '{
+            split($1, a, " "); 
+            pkg = a[2]; 
+            time = $4; 
+            if (time != "") printf "%7.2f 秒 (%2d 分 %02.0f 秒)  <--  %s\n", time, time/60, time%60, pkg
+          }' | sort -nr | head -n 30
+          
+          echo "--------------------------------------------------"
+          echo "📊 检查摘要: 成功匹配了 $(find logs/ -type f -exec grep -l "^time:" {} + | wc -l) 个 package 日志。"
+        else
+          echo "⚠️ 未找到 logs 目录"
+        fi
+        echo "=================================================="
+
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
+    # 打包上传 openwrt/logs 目录供下载查看
+    - name: Upload Build Logs Artifact
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: openwrt-build-logs
+        path: openwrt/logs/
+
+    - name: Check Ccache Stats
+      run: |
+        ccache -s
+        
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
