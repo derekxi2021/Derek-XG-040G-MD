@@ -23,53 +23,52 @@ find target/linux/airoha/ -name "config-*" | while read -r config_file; do
 done
 
 # ------------------------------------------------------------
-# 2. 注入 WAN MAC 地址 +1 规则 (精准作用于 lan1 物理节点)
+# 2. 注入 WAN MAC 地址 +1 规则 (uci-defaults 首次启动生效，支持保留配置升级)
 # ------------------------------------------------------------
-echo ">>> [2/5] 正在配置 WAN MAC 地址 +1 规则..."
+echo ">>> [2/5] 正在配置 WAN MAC 地址 +1 初始化规则..."
 
-mkdir -p files/etc/init.d
+# 创建 uci-defaults 目录
+mkdir -p files/etc/uci-defaults
 
-cat << 'EOF' > files/etc/init.d/fix_wan_mac
-#!/bin/sh /etc/rc.common
+cat << 'EOF' > files/etc/uci-defaults/99-fix-wan-mac
+#!/bin/sh
 
-START=99
+# 1. 安全检查：如果检测到已有网络配置（说明是保留配置升级上来的），直接退出不干预
+if uci -q get network.wan.proto >/dev/null; then
+    exit 0
+fi
 
-start() {
-    sleep 3
+# 2. 抓取 lan1 节点的原始物理 MAC
+lan_mac=$(cat /sys/class/net/lan1/address 2>/dev/null)
 
-    # 1. 抓取 lan1 节点的原始物理 MAC
-    lan_mac=$(cat /sys/class/net/lan1/address 2>/dev/null)
+if [ -n "$lan_mac" ] && [ "$lan_mac" != "00:00:00:00:00:00" ]; then
+    prefix=$(echo "$lan_mac" | awk -F: '{print $1":"$2":"$3":"$4":"$5}')
+    last_hex=$(echo "$lan_mac" | awk -F: '{print $6}')
+    
+    last_dec=$(printf "%d" "0x$last_hex")
+    next_dec=$(( (last_dec + 1) % 256 ))
+    next_hex=$(printf "%02x" $next_dec)
+    wan_mac="${prefix}:${next_hex}"
 
-    if [ -n "$lan_mac" ] && [ "$lan_mac" != "00:00:00:00:00:00" ]; then
-        prefix=$(echo "$lan_mac" | awk -F: '{print $1":"$2":"$3":"$4":"$5}')
-        last_hex=$(echo "$lan_mac" | awk -F: '{print $6}')
-        
-        last_dec=$(printf "%d" "0x$last_hex")
-        next_dec=$(( (last_dec + 1) % 256 ))
-        next_hex=$(printf "%02x" $next_dec)
-        wan_mac="${prefix}:${next_hex}"
+    # 3. 将 WAN 口正确绑定到物理网卡 lan1
+    uci set network.wan=interface
+    uci set network.wan.proto='dhcp'
+    uci set network.wan.device='lan1'
+    uci set network.wan.macaddr="$wan_mac"
 
-        # 2. 将 WAN 口正确绑定到物理网卡 lan1
-        uci set network.wan=interface
-        uci set network.wan.proto='dhcp'
-        uci set network.wan.device='lan1'
-        uci set network.wan.macaddr="$wan_mac"
+    # 4. 将 MAC 注入物理 lan1 设备层 (DSA 架构)
+    uci set network.lan1=device
+    uci set network.lan1.name='lan1'
+    uci set network.lan1.macaddr="$wan_mac"
 
-        # 3. 强行将 MAC 注入物理 lan1 设备层 (DSA 架构核心)
-        uci set network.lan1=device
-        uci set network.lan1.name='lan1'
-        uci set network.lan1.macaddr="$wan_mac"
+    uci commit network
+fi
 
-        uci commit network
-        /etc/init.d/network reload 2>/dev/null || true
-    fi
-}
+exit 0
 EOF
 
-chmod +x files/etc/init.d/fix_wan_mac
-
-mkdir -p files/etc/rc.d
-ln -s ../init.d/fix_wan_mac files/etc/rc.d/S99fix_wan_mac 2>/dev/null || true
+# 赋予可执行权限
+chmod +x files/etc/uci-defaults/99-fix-wan-mac
 
 # ------------------------------------------------------------
 # 3. 集成 Airoha NPU 控制插件 (luci-app-airoha-npu)
