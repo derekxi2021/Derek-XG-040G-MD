@@ -179,26 +179,13 @@ echo ">>> [DIY-P2] 修复完成！CPU/Temp 插件与温度节点映射均已配�
 # =========================================================
 echo ">>> 正在从 github.com/Loyalsoldier 下载最新的 geosite / geoip 数据库..."
 
-# 1. 创建打包所需的镜像文件夹（涵盖 v2ray 与 xray 路径）
+# 1. 清理并重新创建唯一需要的 v2ray 目标文件夹
+rm -rf files/usr/share/xray files/usr/share/v2ray
 mkdir -p files/usr/share/v2ray/
-mkdir -p files/usr/share/xray/
 
-# 2. 从 github 高速下载 Loyalsoldier 最新数据库到 xray 目录
-wget -qO files/usr/share/xray/geosite.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
-wget -qO files/usr/share/xray/geoip.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
-
-# 3. 修正：将 xray 目录下的文件同步复制一份给 v2ray 目录
-cp -f files/usr/share/xray/geoip.dat files/usr/share/v2ray/geoip.dat
-cp -f files/usr/share/xray/geosite.dat files/usr/share/v2ray/geosite.dat
-
-# 4. 将 rule 路径写入固件的 sysupgrade 默认保留配置中
-SYSUPGRADE_CONF="package/base-files/files/etc/sysupgrade.conf"
-if [ -f "$SYSUPGRADE_CONF" ]; then
-    grep -q "/usr/share/v2ray/geosite.dat" "$SYSUPGRADE_CONF" || echo "/usr/share/v2ray/geosite.dat" >> "$SYSUPGRADE_CONF"
-    grep -q "/usr/share/v2ray/geoip.dat" "$SYSUPGRADE_CONF" || echo "/usr/share/v2ray/geoip.dat" >> "$SYSUPGRADE_CONF"
-    grep -q "/usr/share/xray/geosite.dat" "$SYSUPGRADE_CONF" || echo "/usr/share/xray/geosite.dat" >> "$SYSUPGRADE_CONF"
-    grep -q "/usr/share/xray/geoip.dat" "$SYSUPGRADE_CONF" || echo "/usr/share/xray/geoip.dat" >> "$SYSUPGRADE_CONF"
-fi
+# 2. 从 github 下载最新数据库直接存入 v2ray 目录
+wget -qO files/usr/share/v2ray/geosite.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
+wget -qO files/usr/share/v2ray/geoip.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
 
 echo ">>> 最新 geosite / geoip 数据库注入完成！"
 
